@@ -1,0 +1,76 @@
+#pragma kernel InitFreeList
+#pragma kernel InitParticles
+#pragma kernel SpawnParticles
+#pragma kernel UpdateParticles
+
+#include "Particle.hlsl"
+
+// 死亡したパーティクルのインデックスを管理するリスト
+AppendStructuredBuffer<uint> PoolAppend;
+// 新たに生成されるパーティクルのインデックスを管理するリスト
+ConsumeStructuredBuffer<uint> PoolConsume;
+
+AppendStructuredBuffer<uint> AliveList;
+
+RWStructuredBuffer<uint> AliveCounter;
+
+RWStructuredBuffer<Particle> Particles;
+
+cbuffer Params
+{
+    uint _Capacity;
+}
+
+[numthreads(128,1,1)]
+void InitFreeList (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Capacity) return;
+
+    PoolAppend.Append(i);
+}
+
+[numthreads(128,1,1)]
+void InitParticles(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Capacity) return;
+
+    Particle p;
+    p.position = float3(0,0,0);
+    p.velocity = float3(0,0,0);
+    p.life = 0.0;
+    p.mass = 0.0;
+
+    Particles[i] = p;
+}
+
+[numthreads(128,1,1)]
+void SpawnParticles (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    uint oldCount;
+    InterlockedAdd(AliveCounter[0], 1, oldCount);
+    if (oldCount >= _Capacity) return;
+
+    uint newIndex = PoolConsume.Consume();
+
+    // ここで newIndex を使って新しいパーティクルを初期化する処理を行う
+}
+
+[numthreads(128,1,1)]
+void UpdateParticles (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Capacity) return;
+
+    // ここでパーティクルの更新処理を行う
+    // 例えば、寿命が尽きた場合は以下のようにインデックスをプールに戻す
+    bool isDead = false; // パーティクルの状態に基づいて設定する
+    if (isDead)
+    {
+        PoolAppend.Append(i);
+        uint oldCount;
+        InterlockedAdd(AliveCounter[0], -1, oldCount);
+    }
+}

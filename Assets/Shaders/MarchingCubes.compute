@@ -1,0 +1,124 @@
+// MarchingCubes.compute - build scalar field from particles and extract iso-surface
+#pragma kernel ClearField
+#pragma kernel SplatDensity
+#pragma kernel BuildTriangles
+
+struct Particle {
+    float3 x; float3 v; float rho; float lambda;
+};
+
+StructuredBuffer<Particle> _Particles;
+uint _NumParticles;
+
+// Field (scalar grid)
+RWStructuredBuffer<float> _Field;
+int3   _FieldRes;
+float3 _FieldMin;
+float  _FieldDx;
+float  _Isovalue;
+
+// Params for density
+float _H;
+float _RestDensity;
+
+#define PI 3.14159265359
+
+// Append vertex buffer (flattened)
+AppendStructuredBuffer<float3> _TriVerts;
+
+// MC tables
+StructuredBuffer<int> _EdgeTable; // 256
+StructuredBuffer<int> _TriTable;  // 256*16
+
+float W_poly6(float r){
+    if (r>=_H) return 0;
+    float x = (_H*_H - r*r);
+    float k = 315.0/(64.0*PI*pow(_H,9));
+    return k*x*x*x;
+}
+
+int FieldId(int3 c){ return (c.z*_FieldRes.y + c.y)*_FieldRes.x + c.x; }
+float3 FieldPos(int3 c){ return _FieldMin + (float3)c * _FieldDx; }
+
+// 1) ClearField
+[numthreads(8,8,8)]
+void ClearField(uint3 tid:SV_DispatchThreadID){
+    if (any(tid>=_FieldRes)) return;
+    _Field[FieldId(tid)] = 0;
+}
+
+// 2) SplatDensity (simple: grid-scan * particles loop) - small scenes
+[numthreads(8,8,8)]
+void SplatDensity(uint3 tid:SV_DispatchThreadID){
+    if (any(tid>=_FieldRes)) return;
+    int id = FieldId(tid);
+    float3 gp = FieldPos(tid);
+    float accum = 0;
+    [loop] for(uint i=0;i<_NumParticles;i++){
+        float r = distance(gp, _Particles[i].x);
+        if (r<_H){
+            accum += W_poly6(r);
+        }
+    }
+    _Field[id] = accum*_RestDensity; // same scale as PBF density
+}
+
+// 3) BuildTriangles
+float Sample(int3 c){ return _Field[FieldId(c)] - _Isovalue; }
+
+float3 VertexInterp(float3 p0, float3 p1, float v0, float v1){
+    float t = v0/(v0 - v1 + 1e-6);
+    t = saturate(t);
+    return lerp(p0, p1, t);
+}
+
+float3 Pos(int3 c){ return _FieldMin + (float3)c * _FieldDx; }
+
+[numthreads(8,8,8)]
+void BuildTriangles(uint3 tid:SV_DispatchThreadID){
+    if (any(tid>=(_FieldRes-1))) return;
+    int3 c = int3(tid);
+
+    float v[8];
+    float3 p[8];
+    [unroll] for(int z=0;z<2;z++)
+    [unroll] for(int y=0;y<2;y++)
+    [unroll] for(int x=0;x<2;x++){
+        int idx = (z<<2)|(y<<1)|x;
+        int3 cc = c + int3(x,y,z);
+        v[idx] = Sample(cc);
+        p[idx] = Pos(cc);
+    }
+
+    int cubeIndex = 0;
+    [unroll] for(int i=0;i<8;i++){ if (v[i] < 0) cubeIndex |= (1<<i); }
+    int edgeFlags = _EdgeTable[cubeIndex];
+    if (edgeFlags==0) return;
+
+    float3 vertList[12];
+    // Edge -> vertex interpolation mapping
+    if (edgeFlags &   1) vertList[ 0] = VertexInterp(p[0], p[1], v[0], v[1]);
+    if (edgeFlags &   2) vertList[ 1] = VertexInterp(p[1], p[3], v[1], v[3]);
+    if (edgeFlags &   4) vertList[ 2] = VertexInterp(p[2], p[3], v[2], v[3]);
+    if (edgeFlags &   8) vertList[ 3] = VertexInterp(p[0], p[2], v[0], v[2]);
+    if (edgeFlags &  16) vertList[ 4] = VertexInterp(p[4], p[5], v[4], v[5]);
+    if (edgeFlags &  32) vertList[ 5] = VertexInterp(p[5], p[7], v[5], v[7]);
+    if (edgeFlags &  64) vertList[ 6] = VertexInterp(p[6], p[7], v[6], v[7]);
+    if (edgeFlags & 128) vertList[ 7] = VertexInterp(p[4], p[6], v[4], v[6]);
+    if (edgeFlags & 256) vertList[ 8] = VertexInterp(p[0], p[4], v[0], v[4]);
+    if (edgeFlags & 512) vertList[ 9] = VertexInterp(p[1], p[5], v[1], v[5]);
+    if (edgeFlags &1024) vertList[10] = VertexInterp(p[3], p[7], v[3], v[7]);
+    if (edgeFlags &2048) vertList[11] = VertexInterp(p[2], p[6], v[2], v[6]);
+
+    int triBase = cubeIndex*16;
+    for(int t=0;t<16;t+=3){
+        int a = _TriTable[triBase+t+0];
+        int b = _TriTable[triBase+t+1];
+        int c3= _TriTable[triBase+t+2];
+        if (a<0 || b<0 || c3<0) break;
+        // Append 3 vertices for DrawProceduralIndirect
+        _TriVerts.Append(vertList[a]);
+        _TriVerts.Append(vertList[b]);
+        _TriVerts.Append(vertList[c3]);
+    }
+}
