@@ -78,4 +78,6 @@ public class PointDrawTest : MonoBehaviour
         commandBuf.SetData(commandData);
         Graphics.RenderMeshIndirect(rp, mesh, commandBuf, commandCount);
     }
+    
+    // test code
 }
