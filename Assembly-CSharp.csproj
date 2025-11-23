@@ -46,19 +46,25 @@
     <Analyzer Include="D:\Unity\Hub\Editor\6000.0.58f2\Editor\Data\Tools\Unity.SourceGenerators\Unity.UIToolkit.SourceGenerator.dll" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Assets\Scripts\Move\Move.cs" />
     <Compile Include="Assets\Scripts\PointDrawTest.cs" />
     <Compile Include="Assets\Scripts\CS\Particle.cs" />
     <Compile Include="Assets\Scripts\CS\MCTables.cs" />
+    <Compile Include="Assets\Scripts\MoveAppendConsume\MoveAppendConsume.cs" />
     <Compile Include="Assets\TutorialInfo\Scripts\Readme.cs" />
     <Compile Include="Assets\Scripts\CS\WaterPBF.cs" />
     <Compile Include="Assets\Scripts\RenderPrimitivesIndexed\RenderPrimitivesIndexed.cs" />
     <None Include="Assets\Shaders\MarchingCubes.compute" />
+    <None Include="Assets\Scripts\MoveAppendConsume\MoveAppendConsume.shader" />
     <None Include="Assets\Scripts\RenderPrimitivesIndexed\RenderPrimitivesIndexed_Geom.shader" />
+    <None Include="Assets\Scripts\MoveAppendConsume\MoveAppendConsume.compute" />
     <None Include="Assets\Shaders\MCUnlit.shader" />
     <None Include="Assets\Shaders\IndirectInstanceCount.hlsl" />
+    <None Include="Assets\Scripts\Move\Move.compute" />
     <None Include="Assets\Scripts\Particle.hlsl" />
     <None Include="Assets\Scripts\ParticleTestCS.compute" />
     <None Include="Assets\Shaders\PBF.compute" />
+    <None Include="Assets\Scripts\Move\PointDrawGeomMove.shader" />
     <Reference Include="UnityEngine">
       <HintPath>D:\Unity\Hub\Editor\6000.0.58f2\Editor\Data\Managed\UnityEngine\UnityEngine.dll</HintPath>
     </Reference>
