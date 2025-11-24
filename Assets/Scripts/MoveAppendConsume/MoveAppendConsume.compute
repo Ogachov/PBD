@@ -1,17 +1,26 @@
+#pragma kernel InitPoolList
+#pragma kernel InitParticles
+#pragma kernel SpawnParticles
 #pragma kernel UpdateParticles
 
 struct Particle
 {
     float3 position;
     float3 velocity;
+    float life;
 };
 
 RWStructuredBuffer<Particle> Particles;
+AppendStructuredBuffer<uint> AliveList;
+
+AppendStructuredBuffer<uint> PoolAppend;
+ConsumeStructuredBuffer<uint> PoolConsume;
 
 cbuffer Params
 {
     uint _Capacity;
     uint _FrameCount;
+    uint _SpawnCount;
     float _DeltaTime;
     float _Gravity;
 }
@@ -48,12 +57,54 @@ float3 RandomFloat3(uint seed)
 }
 
 [numthreads(128,1,1)]
+void InitPoolList (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Capacity) return;
+
+    PoolAppend.Append(i);
+}
+
+[numthreads(128,1,1)]
+void InitParticles(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Capacity) return;
+    Particle p;
+    p.position = float3(0,0,0);
+    p.velocity = float3(0,0,0);
+    p.life = 0.0;
+    Particles[i] = p;
+}
+
+[numthreads(128,1,1)]
+void SpawnParticles (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _SpawnCount) return;
+
+    uint newIndex = PoolConsume.Consume();
+ 
+    Particle p;
+    float3 pos = RandomFloat3(GetSeed(id, _FrameCount)) * 10.0f - 5.0f;
+    p.position = float3(pos.x, 10.0f, pos.z);
+    p.velocity = float3(0.0f, 0.0f, 0.0f);
+    p.life = 1.0f;
+
+    Particles[newIndex] = p;
+}
+
+[numthreads(128,1,1)]
 void UpdateParticles (uint3 id : SV_DispatchThreadID)
 {
     uint i = id.x;
     if (i >= _Capacity) return;
 
     Particle p = Particles[i];
+    if (p.life <= 0.0f)
+    {
+        return;
+    }
     
     p.velocity -= float3(0.0f, _Gravity * _DeltaTime, 0.0f);
     p.position += p.velocity * _DeltaTime;
@@ -62,13 +113,18 @@ void UpdateParticles (uint3 id : SV_DispatchThreadID)
     
     if (p.position.y < 0.0f)
     {
-        p.position.y += 10.0f;
-        
-        float3 pos = RandomFloat3(GetSeed(id, _FrameCount)) * 10.0f - 5.0f;
-        p.position.x = pos.x;
-        p.position.z = pos.z;
-        p.velocity = float3(0.0f, 0.0f, 0.0f);
+        // p.position.y += 10.0f;
+        //
+        // float3 pos = RandomFloat3(GetSeed(id, _FrameCount)) * 10.0f - 5.0f;
+        // p.position.x = pos.x;
+        // p.position.z = pos.z;
+        // p.velocity = float3(0.0f, 0.0f, 0.0f);
+        p.life = 0.0f;
+        Particles[i] = p;
+        PoolAppend.Append(i);
+        return;
     }
     
     Particles[i] = p;
+    AliveList.Append(i);
 }

@@ -26,12 +26,13 @@ Shader "Unlit/MoveAppendConsume"
             {
                 float3 vertex;
                 float3 velocity;
+                float life;
             };
 
             struct v2f
             {
                 float4 vertex : SV_POSITION;
-                // float4 color : COLOR;
+                float4 color : COLOR;
             };
 
             StructuredBuffer<ParticleData> _PositionBuffer;
@@ -46,6 +47,7 @@ Shader "Unlit/MoveAppendConsume"
                 ParticleData p = _PositionBuffer[id];
                 o.vertex = mul(_ObjectToWorld, float4(p.vertex, 1.0));
                 // o.vertex = float4(vData.vertex, 1.0);
+                o.color = p.life > 0.0 ? half4(0,0,1,1) : half4(1,0,0,1);
                 return o;
             }
             
@@ -55,22 +57,12 @@ Shader "Unlit/MoveAppendConsume"
             {
                 float4 center = input[0].vertex;
                 float size = _Size; // 四角形のサイズ
-                // float size = 0.05; // 四角形のサイズ
 
                 float4x4 invView = unity_MatrixInvV;
                 invView._m03_m13_m23 = float3(0, 0, 0); // 平行移動成分をゼロにする
                 v2f vertex;
+                vertex.color = input[0].color;
 
-                // centerに基づいて四角形の4頂点を生成してObject空間からクリップ空間へ変換
-                // vertex.vertex = UnityObjectToClipPos(center + float4(-size, -size, 0, 0));
-                // triStream.Append(vertex);
-                // vertex.vertex = UnityObjectToClipPos(center + float4(-size, size, 0, 0));
-                // triStream.Append(vertex);
-                // vertex.vertex = UnityObjectToClipPos(center + float4(size, -size, 0, 0));
-                // triStream.Append(vertex);
-                // vertex.vertex = UnityObjectToClipPos(center + float4(size, size, 0, 0));
-                // triStream.Append(vertex);
-                //UNITY_MATRIX_VP
                 vertex.vertex = mul(UNITY_MATRIX_VP, center + mul(invView,float4(-size, -size, 0, 0)));
                 triStream.Append(vertex);
                 vertex.vertex = mul(UNITY_MATRIX_VP, center + mul(invView,float4(-size, size, 0, 0)));
@@ -79,21 +71,13 @@ Shader "Unlit/MoveAppendConsume"
                 triStream.Append(vertex);
                 vertex.vertex = mul(UNITY_MATRIX_VP, center + mul(invView,float4(size, size, 0, 0)));
                 triStream.Append(vertex);
-                // vertex.vertex = UnityObjectToClipPos(center + mul(invView,float4(-size, -size, 0, 0)));
-                // triStream.Append(vertex);
-                // vertex.vertex = UnityObjectToClipPos(center + mul(invView,float4(-size, size, 0, 0)));
-                // triStream.Append(vertex);
-                // vertex.vertex = UnityObjectToClipPos(center + mul(invView,float4(size, -size, 0, 0)));
-                // triStream.Append(vertex);
-                // vertex.vertex = UnityObjectToClipPos(center + mul(invView,float4(size, size, 0, 0)));
-                // triStream.Append(vertex);
 
                 triStream.RestartStrip();
             }
 
             half4 frag (v2f i) : SV_Target
             {
-                half4 col = _Color;
+                half4 col = i.color;
                 return col;
             }
             ENDCG

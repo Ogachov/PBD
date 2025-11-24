@@ -51,7 +51,6 @@
     <Compile Include="Assets\Scripts\CS\Particle.cs" />
     <Compile Include="Assets\Scripts\CS\MCTables.cs" />
     <Compile Include="Assets\Scripts\MoveAppendConsume\MoveAppendConsume.cs" />
-    <Compile Include="Assets\TutorialInfo\Scripts\Readme.cs" />
     <Compile Include="Assets\Scripts\CS\WaterPBF.cs" />
     <Compile Include="Assets\Scripts\RenderPrimitivesIndexed\RenderPrimitivesIndexed.cs" />
     <None Include="Assets\Shaders\MarchingCubes.compute" />
