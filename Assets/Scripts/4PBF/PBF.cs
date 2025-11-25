@@ -11,6 +11,7 @@ namespace RenderPrimitivesIndexed
         struct Particle
         {
             float3 position;
+            float radiusScale;
             float3 velocity;
             float life;
             float4 color;

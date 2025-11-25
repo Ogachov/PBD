@@ -64,6 +64,7 @@
     <None Include="Assets\Scripts\2Move\Move.compute" />
     <None Include="Assets\Scripts\Particle.hlsl" />
     <None Include="Assets\Scripts\ParticleTestCS.compute" />
+    <None Include="Assets\Scripts\4PBF\Particle.hlsl" />
     <None Include="Assets\Shaders\PBFSample.compute" />
     <None Include="Assets\Scripts\2Move\PointDrawGeomMove.shader" />
     <None Include="Assets\Scripts\4PBF\PBFParticle.shader" />

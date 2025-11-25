@@ -22,13 +22,7 @@ Shader "Unlit/PBFParticle"
             
             #include "UnityCG.cginc"
 
-            struct ParticleData
-            {
-                float3 vertex;
-                float3 velocity;
-                float life;
-                float4 color;
-            };
+            #include "Particle.hlsl"
 
             struct v2f
             {
@@ -36,7 +30,7 @@ Shader "Unlit/PBFParticle"
                 float4 color : COLOR;
             };
 
-            StructuredBuffer<ParticleData> _PositionBuffer;
+            StructuredBuffer<Particle> _PositionBuffer;
             
             half4 _Color;
             half _Size;
@@ -45,8 +39,8 @@ Shader "Unlit/PBFParticle"
             v2f vert (uint id : SV_VertexID)
             {
                 v2f o;
-                ParticleData p = _PositionBuffer[id];
-                o.vertex = mul(_ObjectToWorld, float4(p.vertex, 1.0));
+                Particle p = _PositionBuffer[id];
+                o.vertex = mul(_ObjectToWorld, float4(p.position, 1.0));
                 // o.vertex = float4(vData.vertex, 1.0);
                 o.color = p.color;
                 return o;

@@ -3,13 +3,7 @@
 #pragma kernel SpawnParticles
 #pragma kernel UpdateParticles
 
-struct Particle
-{
-    float3 position;
-    float3 velocity;
-    float life;
-    float4 color;
-};
+#include "Particle.hlsl"
 
 RWStructuredBuffer<Particle> Particles;
 AppendStructuredBuffer<uint> AliveList;
@@ -78,6 +72,7 @@ void InitParticles(uint3 id : SV_DispatchThreadID)
     if (i >= _Capacity) return;
     Particle p;
     p.position = float3(0,0,0);
+    p.radiusScale = 1.0 + (float)i / (_Capacity * 10.0);
     p.velocity = float3(0,0,0);
     p.life = 0.0;
     p.color = half4(1,1,1,1);
@@ -92,13 +87,12 @@ void SpawnParticles (uint3 id : SV_DispatchThreadID)
 
     uint newIndex = PoolConsume.Consume();
  
-    Particle p;
+    Particle p = Particles[newIndex];
     float3 pos = RandomFloat3(GetSeed(id, _FrameCount)) * 10.0f - 5.0f;
     p.position = float3(pos.x, 9.0f, pos.z);
     p.velocity = float3(0.0f, 0.0f, 0.0f);
     p.color = half4(1.0, 1.0, 1.0, 1.0);
     p.life = 1.0f;
-
     Particles[newIndex] = p;
 }
 
@@ -114,8 +108,8 @@ void UpdateParticles (uint3 id : SV_DispatchThreadID)
         return;
     }
     
-    float3 boundsMin = _BoundsCenter - _BoundsSize * 0.5f;
-    float3 boundsMax = _BoundsCenter + _BoundsSize * 0.5f;
+    float3 boundsMin = _BoundsCenter - _BoundsSize * 0.5f + p.radiusScale * _RepulsionRadius;
+    float3 boundsMax = _BoundsCenter + _BoundsSize * 0.5f - p.radiusScale * _RepulsionRadius;
     
     float3 oldPos = p.position;
     
@@ -142,11 +136,17 @@ void UpdateParticles (uint3 id : SV_DispatchThreadID)
         
         float3 toOther = other.position - p.position;
         float dist = length(toOther);
-        // if (dist < _RepulsionRadius && dist > 0.0f)
+
+        // float3 repulsionDir = normalize(toOther);
+        // float repulsionStrength = saturate((_RepulsionRadius - dist) / _RepulsionRadius);
+        // p.velocity -= repulsionDir * repulsionStrength * _RepulsionStrength * _DeltaTime;
+        
+        // velocityではなくpositionに直接影響を与える
+        if (dist < _RepulsionRadius && dist > 0.0f)
         {
             float3 repulsionDir = normalize(toOther);
-            float repulsionStrength = saturate((_RepulsionRadius - dist) / _RepulsionRadius);
-            p.velocity -= repulsionDir * repulsionStrength * _RepulsionStrength * _DeltaTime;
+            float repulsionStrength = (_RepulsionRadius - dist) / _RepulsionRadius;
+            p.position -= repulsionDir * repulsionStrength * _RepulsionStrength * _DeltaTime;
         }
     }
     
