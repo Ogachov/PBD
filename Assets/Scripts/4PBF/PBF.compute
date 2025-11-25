@@ -1,0 +1,164 @@
+#pragma kernel InitPoolList
+#pragma kernel InitParticles
+#pragma kernel SpawnParticles
+#pragma kernel UpdateParticles
+
+struct Particle
+{
+    float3 position;
+    float3 velocity;
+    float life;
+    float4 color;
+};
+
+RWStructuredBuffer<Particle> Particles;
+AppendStructuredBuffer<uint> AliveList;
+
+AppendStructuredBuffer<uint> PoolAppend;
+ConsumeStructuredBuffer<uint> PoolConsume;
+
+cbuffer Params
+{
+    uint _Capacity;
+    uint _FrameCount;
+    uint _SpawnCount;
+    float _DeltaTime;
+    float _Gravity;
+    float3 _BoundsCenter;
+    float3 _BoundsSize;
+    // 斥力が発生する半径
+    float _RepulsionRadius;
+    float _RepulsionStrength;
+}
+
+uint GetSeed(uint3 dispatchThreadID, uint _FrameCount)
+{
+    return (dispatchThreadID.x * 73856093u) ^ (dispatchThreadID.y * 19349663u) ^ (dispatchThreadID.z * 83492791u) ^ _FrameCount;
+}
+
+uint Hash(uint x)
+{
+    x ^= x >> 17;
+    x *= 0xED5AD4BBu;
+    x ^= x >> 11;
+    x *= 0xAC4C1B51u;
+    x ^= x >> 15;
+    x *= 0x31848BABu;
+    x ^= x >> 14;
+    return x;
+}
+
+// [0.0, 1.0)の範囲でランダムなfloat3を生成
+float3 RandomFloat3(uint seed)
+{
+    uint h1 = Hash(seed);
+    uint h2 = Hash(seed * 1664525u + 1013904223u);
+    uint h3 = Hash(seed * 22695477u + 1u);
+
+    return float3(
+        h1 / 4294967296.0,
+        h2 / 4294967296.0,
+        h3 / 4294967296.0
+    );
+}
+
+[numthreads(128,1,1)]
+void InitPoolList (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Capacity) return;
+
+    PoolAppend.Append(i);
+}
+
+[numthreads(128,1,1)]
+void InitParticles(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Capacity) return;
+    Particle p;
+    p.position = float3(0,0,0);
+    p.velocity = float3(0,0,0);
+    p.life = 0.0;
+    p.color = half4(1,1,1,1);
+    Particles[i] = p;
+}
+
+[numthreads(128,1,1)]
+void SpawnParticles (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _SpawnCount) return;
+
+    uint newIndex = PoolConsume.Consume();
+ 
+    Particle p;
+    float3 pos = RandomFloat3(GetSeed(id, _FrameCount)) * 10.0f - 5.0f;
+    p.position = float3(pos.x, 9.0f, pos.z);
+    p.velocity = float3(0.0f, 0.0f, 0.0f);
+    p.color = half4(1.0, 1.0, 1.0, 1.0);
+    p.life = 1.0f;
+
+    Particles[newIndex] = p;
+}
+
+[numthreads(128,1,1)]
+void UpdateParticles (uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _Capacity) return;
+
+    Particle p = Particles[i];
+    if (p.life <= 0.0f)
+    {
+        return;
+    }
+    
+    float3 boundsMin = _BoundsCenter - _BoundsSize * 0.5f;
+    float3 boundsMax = _BoundsCenter + _BoundsSize * 0.5f;
+    
+    float3 oldPos = p.position;
+    
+    p.velocity -= float3(0.0f, _Gravity * _DeltaTime, 0.0f);
+    p.position += p.velocity * _DeltaTime;
+    
+    // 壁に衝突したら反射
+    float3 hitMin = step(p.position, boundsMin);
+    float3 hitMax = step(boundsMax, p.position);
+    float3 hit = saturate(hitMax + hitMin);
+    p.color = half4(hit, 1.0);
+    
+    p.position = clamp(p.position, boundsMin, boundsMax);
+    float bounce = 0.8;
+    float3 signFlip = 1.0 + hit * (-bounce - 1.0);
+    p.velocity *= signFlip;
+    
+    // 斥力半径内のパーティクルから弾かれる
+    for (uint j = 0; j < _Capacity; j++)
+    {
+        if (i == j) continue;
+        Particle other = Particles[j];
+        if (other.life <= 0.0f) continue;
+        
+        float3 toOther = other.position - p.position;
+        float dist = length(toOther);
+        // if (dist < _RepulsionRadius && dist > 0.0f)
+        {
+            float3 repulsionDir = normalize(toOther);
+            float repulsionStrength = saturate((_RepulsionRadius - dist) / _RepulsionRadius);
+            p.velocity -= repulsionDir * repulsionStrength * _RepulsionStrength * _DeltaTime;
+        }
+    }
+    
+    
+    // if (p.position.y < 0.0f)
+    // {
+    //     p.life = 0.0f;
+    //     Particles[i] = p;
+    //     PoolAppend.Append(i);
+    //     return;
+    // }
+    
+    Particles[i] = p;
+    AliveList.Append(i);
+}
