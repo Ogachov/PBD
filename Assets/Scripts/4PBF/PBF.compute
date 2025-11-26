@@ -88,7 +88,7 @@ void SpawnParticles (uint3 id : SV_DispatchThreadID)
     uint newIndex = PoolConsume.Consume();
  
     Particle p = Particles[newIndex];
-    float3 pos = RandomFloat3(GetSeed(id, _FrameCount)) * 10.0f - 5.0f;
+    float3 pos = RandomFloat3(GetSeed(id, _FrameCount)) * 2.0f - 1.0f;
     p.position = float3(pos.x, 9.0f, pos.z);
     p.velocity = float3(0.0f, 0.0f, 0.0f);
     p.color = half4(1.0, 1.0, 1.0, 1.0);
