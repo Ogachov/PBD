@@ -1,0 +1,744 @@
+using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Mathematics;
+using UnityEngine;
+
+public class MC33
+{
+    // 大きすぎる頂点配列を受け入れられないレンダラー用にある程度のサイズに区切って保存するための定数
+    private int _MC_N = 12; // 
+    private int _MC_DVE = 1 << 12;  // 分割する単位
+    private int _MC_A = (1<<12) - 1;    // マスク用定数
+
+    /*_MCnT and _MCnV are the value of the first dimension of arrays T and V of the
+    structure surface. They are used in store_point_normal and store_triangle.
+    functions*/
+    //_MCnT と _MCnV は、構造体 surface の配列 T と V の1次元目の値です。
+    // これらは store_point_normal と store_triangle 関数で使用されます。
+    private int _MCnT;
+    private int _MCnV;
+    
+    private struct surface
+    {
+        public float ISO;
+        public int dim2;
+        public int flag;
+        public int nV;
+        public int nT;
+        public List<int> T;
+        public NativeList<float3> V;
+        public NativeList<float3> N;
+    }
+    private surface _MC_S;
+    
+    private float3 _MC_O;
+    private float3 _MC_D;
+    private int3 _MCn;
+    
+    // temporary structures that store the indices of triangle vertices:
+    // 計算用の一時変数
+    private int[][] _Ox;
+    private int[][] _Oy;
+    private int[][] _Nx;
+    private int[][] _Ny;
+    private int[] _OL;
+    private int[] _NL;
+
+    private float[] _F;
+
+    private void init_temp_isosurface(MC33Grid grd)
+    {
+        _MCn = grd.N;
+        _MC_O = grd.r0;
+        _MC_D = grd.d;
+        
+        _OL = new int[_MCn.x + 1];
+        _NL = new int[_MCn.x + 1];
+        _Oy = new int[_MCn.y][];
+        _Ny = new int[_MCn.y][];
+        _Ox = new int[_MCn.y + 1][];
+        _Nx = new int[_MCn.y + 1][];
+
+        for (var i = 0; i < _MCn.y; i++)
+        {
+            _Ox[i] = new int[_MCn.x];
+            _Nx[i] = new int[_MCn.x];
+            _Oy[i] = new int[_MCn.x + 1];
+            _Ny[i] = new int[_MCn.x + 1];
+        }
+        _Ox[_MCn.y] = new int[_MCn.x];
+        _Nx[_MCn.y] = new int[_MCn.x];
+    }
+    
+    private float GetCellValue(int x, int y, int z)
+    {
+        int nx = _MCn.x;
+        int ny = _MCn.y + 1;
+        int nz = _MCn.z + 1;
+        return _F[x + y * nx + z * nx * ny];
+    }
+
+/******************************************************************
+Vertices:           Faces:
+    3 __________2        ___________
+   /|          /|      /|          /|
+  / |         / |     / |   2     / |
+7/__________6/  |    /  |     4  /  |
+|   |       |   |   |�����������| 1 |     z
+|   0_______|___1   | 3 |_______|___|     |
+|  /        |  /    |  /  5     |  /      |____y
+| /         | /     | /     0   | /      /
+4/__________5/      |/__________|/      x
+
+
+This function return a vector with all six test face results (face[6]). Each
+result value is 1 if the positive face vertices are joined, -1 if the negative
+vertices are joined, and 0 (unchanged) if the test must no be applied. The
+return value of this function is the the sum of all six results.
+この関数は、6つのテスト面の結果（face[6]）すべてを格納したベクトルを返します。
+それぞれの結果値は、正の面頂点が結合されている場合は1、負の面頂点が結合されている場合は-1、
+テストを適用しない場合は0（変更なし）となります。
+この関数の戻り値は、6つの結果の合計です。
+*/
+	private int face_tests(int[] face, int ind, int sw, float[] v, int v1)
+	{
+		if((ind&0x80) != 0)//vertex 0
+		{
+			face[0] = ((ind&0xCC) == 0x84? (v[v1 + 0]*v[v1 + 5] < v[v1 + 1]*v[v1 + 4]? -sw: sw): 0);//0x84 = 10000100, vertices 0 and 5
+			face[3] = ((ind&0x99) == 0x81? (v[v1 + 0]*v[v1 + 7] < v[v1 + 3]*v[v1 + 4]? -sw: sw): 0);//0x81 = 10000001, vertices 0 and 7
+			face[4] = ((ind&0xF0) == 0xA0? (v[v1 + 0]*v[v1 + 2] < v[v1 + 1]*v[v1 + 3]? -sw: sw): 0);//0xA0 = 10100000, vertices 0 and 2
+		}
+		else
+		{
+			face[0] = ((ind&0xCC) == 0x48? (v[v1 + 0]*v[v1 + 5] < v[v1 + 1]*v[v1 + 4]? sw: -sw): 0);//0x48 = 01001000, vertices 1 and 4
+			face[3] = ((ind&0x99) == 0x18? (v[v1 + 0]*v[v1 + 7] < v[v1 + 3]*v[v1 + 4]? sw: -sw): 0);//0x18 = 00011000, vertices 3 and 4
+			face[4] = ((ind&0xF0) == 0x50? (v[v1 + 0]*v[v1 + 2] < v[v1 + 1]*v[v1 + 3]? sw: -sw): 0);//0x50 = 01010000, vertices 1 and 3
+		}
+		if((ind&0x02) != 0)//vertex 6
+		{
+			face[1] = ((ind&0x66) == 0x42? (v[v1 + 1]*v[v1 + 6] < v[v1 + 2]*v[v1 + 5]? -sw: sw): 0);//0x42 = 01000010, vertices 1 and 6
+			face[2] = ((ind&0x33) == 0x12? (v[v1 + 3]*v[v1 + 6] < v[v1 + 2]*v[v1 + 7]? -sw: sw): 0);//0x12 = 00010010, vertices 3 and 6
+			face[5] = ((ind&0x0F) == 0x0A? (v[v1 + 4]*v[v1 + 6] < v[v1 + 5]*v[v1 + 7]? -sw: sw): 0);//0x0A = 00001010, vertices 4 and 6
+		}
+		else
+		{
+			face[1] = ((ind&0x66) == 0x24? (v[v1 + 1]*v[v1 + 6] < v[v1 + 2]*v[v1 + 5]? sw: -sw): 0);//0x24 = 00100100, vertices 2 and 5
+			face[2] = ((ind&0x33) == 0x21? (v[v1 + 3]*v[v1 + 6] < v[v1 + 2]*v[v1 + 7]? sw: -sw): 0);//0x21 = 00100001, vertices 2 and 7
+			face[5] = ((ind&0x0F) == 0x05? (v[v1 + 4]*v[v1 + 6] < v[v1 + 5]*v[v1 + 7]? sw: -sw): 0);//0x05 = 00000101, vertices 5 and 7
+		}
+		return face[0] + face[1] + face[2] + face[3] + face[4] + face[5];
+	}
+    
+    
+/* Faster function for the face test, the test is applied to only one face
+(int face). This function is only used for the cases 3 and 6 of MC33*/
+/* 面テストの高速化関数。テストは1つの面(int face)のみに適用されます。この関数はMC33のケース3と6でのみ使用されます*/
+	private int face_test1(int face, float[] v, int v1)
+	{
+		switch (face)
+		{
+			case 0:
+				return (v[v1 + 0] * v[v1 + 5] < v[v1 + 1] * v[v1 + 4] ? 0x48 : 0x84);
+			case 1:
+				return (v[v1 + 1] * v[v1 + 6] < v[v1 + 2] * v[v1 + 5] ? 0x24 : 0x42);
+			case 2:
+				return (v[v1 + 3] * v[v1 + 6] < v[v1 + 2] * v[v1 + 7] ? 0x21 : 0x12);
+			case 3:
+				return (v[v1 + 0] * v[v1 + 7] < v[v1 + 3] * v[v1 + 4] ? 0x18 : 0x81);
+			case 4:
+				return (v[v1 + 0] * v[v1 + 2] < v[v1 + 1] * v[v1 + 3] ? 0x50 : 0xA0);
+			case 5:
+				return (v[v1 + 4] * v[v1 + 6] < v[v1 + 5] * v[v1 + 7] ? 0x05 : 0x0A);
+		}
+
+		return 0;
+	}
+
+	private bool signbf(float f)
+	{
+		return f < 0.0f;
+	}
+
+/******************************************************************
+Interior test function. If the test is positive, the function returns a value
+different fom 0. The integer i must be 0 to test if the vertices 0 and 6 are
+joined. 1 for vertices 1 and 7, 2 for vertices 2 and 4, and 3 for 3 and 5.
+For case 13, the integer flagtplane must be 1, and the function returns 2 if
+one of the vertices 0, 1, 2 or 3 is joined to the center point of the cube
+(case 13.5.2), returns 1 if one of the vertices 4, 5, 6 or 7 is joined to the
+center point of the cube (case 13.5.2 too), and it returns 0 if the vertices
+are no joined (case 13.5.1)
+内部テスト関数。テストが肯定的であれば、関数は0とは異なる値を返します。
+頂点0と6が結合されているかどうかをテストするには、整数iは0でなければなりません。
+頂点1と7が結合されている場合は1、頂点2と4が結合されている場合は2、頂点3と5が結合されている場合は3です。
+ケース13の場合、整数flagtplaneは1でなければなりません。
+関数は、頂点0、1、2、または3のいずれかが立方体の中心点に結合されている場合は2を返し（ケース13.5.2）、
+頂点4、5、6、または7のいずれかが立方体の中心点に結合されている場合は1を返し（ケース13.5.2も同様）、
+頂点が結合されていない場合は0を返します（ケース13.5.1）。
+*/
+	private int interior_test(int i, int flagtplane, float[] v, int v1)
+	{
+		float At = v[v1 + 4] - v[v1 + 0];
+		float Bt = v[v1 + 5] - v[v1 + 1];
+		float Ct = v[v1 + 6] - v[v1 + 2];
+		float Dt = v[v1 + 7] - v[v1 + 3];
+		float t = At * Ct - Bt * Dt; //the "a" value.
+
+		if ((i & 0x01) != 0) //false for i = 0 and 2, and true for i = 1 and 3
+		{
+			if (t <= 0.0f) return 0;
+		}
+		else
+		{
+			if (t >= 0.0f) return 0;
+		}
+
+		t = 0.5f * (v[v1 + 3] * Bt + v[v1 + 1] * Dt - v[v1 + 2] * At - v[v1 + 0] * Ct) / t; //t = -b/2a
+		if (t <= 0.0f || t >= 1.0f)
+			return 0;
+
+		At = v[v1 + 0] + At * t;
+		Bt = v[v1 + 1] + Bt * t;
+		Ct = v[v1 + 2] + Ct * t;
+		Dt = v[v1 + 3] + Dt * t;
+
+		if ((i & 0x01) != 0)
+		{
+			if (At * Ct < Bt * Dt && Mathf.Approximately(Mathf.Sign(Bt), Mathf.Sign(Dt)))
+				return (Mathf.Approximately(Mathf.Sign(Bt), Mathf.Sign(v[v1 + i]))) ? 1 : 0 + flagtplane;
+		}
+		else
+		{
+			if (At * Ct > Bt * Dt && Mathf.Approximately(Mathf.Sign(At), Mathf.Sign(Ct)))
+				return (Mathf.Approximately(Mathf.Sign(At), Mathf.Sign(v[v1 + i]))) ? 1 : 0 + flagtplane;
+		}
+
+		return 0;
+	}
+	
+	private int store_point_normal(float3 r, float3 n)
+	{
+		_MC_S.V.Add(r);
+		_MC_S.N.Add(n);
+		_MC_S.nV++;
+		return (_MC_S.nV - 1);
+	}
+	
+	private void store_triangle(int3 t)
+	{
+		_MC_S.T.Add(t.x);
+		_MC_S.T.Add(t.y);
+		_MC_S.T.Add(t.z);
+		_MC_S.nT++;
+	}
+
+	private int surfint(int x, int y, int z, float3 r, float3 n)
+	{
+		r.x = x;
+		r.y = y;
+		r.z = z;
+		if (x == 0)
+			// n[0] = _MC_F[z][y][0] - _MC_F[z][y][1];
+			n.x = GetCellValue(0, y, z) - GetCellValue(1, y, z);
+		else if (x == _MCn.x)
+			// n[0] = _MC_F[z][y][x - 1] - _MC_F[z][y][x];
+			n.x = GetCellValue(x - 1, y, z) - GetCellValue(x, y, z);
+		else
+			// n[0] = 0.5f*(_MC_F[z][y][x - 1] - _MC_F[z][y][x + 1]);
+			n.x = 0.5f * (GetCellValue(x - 1, y, z) - GetCellValue(x + 1, y, z));
+
+		if (y == 0)
+			// n[1] = _MC_F[z][0][x] - _MC_F[z][1][x];
+			n.y = GetCellValue(x, 0, z) - GetCellValue(x, 1, z);
+		else if (y == _MCn.y)
+			// n[1] = _MC_F[z][y - 1][x] - _MC_F[z][y][x];
+			n.y = GetCellValue(x, y - 1, z) - GetCellValue(x, y, z);
+		else
+			// n[1] = 0.5f*(_MC_F[z][y - 1][x] - _MC_F[z][y + 1][x]);
+			n.y = 0.5f * (GetCellValue(x, y - 1, z) - GetCellValue(x, y + 1, z));
+
+		if (z == 0)
+			// n[2] = _MC_F[0][y][x] - _MC_F[1][y][x];
+			n.z = GetCellValue(x, y, 0) - GetCellValue(x, y, 1);
+		else if (z == _MCn.z)
+			// n[2] = _MC_F[z - 1][y][x] - _MC_F[z][y][x];
+			n.z = GetCellValue(x, y, z - 1) - GetCellValue(x, y, z);
+		else
+			// n[2] = 0.5f*(_MC_F[z - 1][y][x] - _MC_F[z + 1][y][x]);
+			n.z = 0.5f * (GetCellValue(x, y, z - 1) - GetCellValue(x, y, z + 1));
+
+		// return store_point_normal(r,n);
+		return store_point_normal(r, n);
+	}
+
+/******************************************************************
+This function find the MC33 case (using the index i, and the face and interior
+tests). The correct triangle pattern is obtained from the arrays contained in
+the MC33_LookUpTable.h file. The necessary vertices (intersection points) are
+also calculated here (using trilinear interpolation).
+この関数は、MC33 ケースを検索します（インデックス i と面および内部テストを使用）。
+正しい三角形パターンは、MC33_LookUpTable.h ファイルに含まれる配列から取得されます。
+必要な頂点（交点）もここで計算されます（三線補間を使用）。
+
+       _____2_____
+     /|          /|
+   11 |<-3     10 |
+   /____6_____ /  1     z
+  |   |       |   |     |
+  |   |_____0_|___|     |____y
+  7  /        5  /     /
+  | 8         | 9     x
+  |/____4_____|/
+
+The temporary matrices: _Ox, _Oy, _Nx and _Ny, and vectors: _OL and _NL are filled
+and used here.
+一時行列_Ox、_Oy、_Nx、_Nyとベクトル_OL、_NLが
+入力され、ここで使用されます。
+*/
+	private void find_case(int x, int y, int z, int i, float[] v, int v1)
+	{
+		// const unsigned short int *pcase;
+		MC33LookUpTable.Case pcase = MC33LookUpTable.Case.Case_0;
+		int caseIndex = 0;
+
+		float t;
+		float3 r = new float3();
+		float3 n = new float3();
+		int k, m, c;
+		var f = new int[6];
+		int[] p = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+
+		m = i & 0x80;
+		c = MC33LookUpTable.Case_Index[(m != 0) ? (i ^ 0xff) : i];
+		switch (c >> 8) //find the MC33 case
+		{
+		case 1: //********************************************
+			if ((c & 0x0080) != 0) m ^= 0x80;
+			pcase = MC33LookUpTable.Case.Case_1;
+			caseIndex = c & 0x7F;
+			break;
+		case 2: //********************************************
+			if ((c & 0x0080) != 0) m ^= 0x80;
+			pcase = MC33LookUpTable.Case.Case_2;
+			caseIndex = c & 0x7F;
+			break;
+		case 3: //********************************************
+			if ((c & 0x0080) != 0) m ^= 0x80;
+			if (((m != 0 ? i : i ^ 0xFF) & face_test1((c & 0x7F) >> 1, v, v1)) != 0)
+			{
+				pcase = MC33LookUpTable.Case.Case_3_2;
+				caseIndex = 4 * (c & 0x7F);
+			}
+			else
+			{
+				pcase = MC33LookUpTable.Case.Case_3_1;
+				caseIndex = 2 * (c & 0x7F);
+			}
+
+			break;
+		case 4: //********************************************
+			if ((c & 0x0080) != 0) m ^= 0x80;
+			if (interior_test((c & 0x7F), 0, v, v1) != 0)
+			{
+				pcase = MC33LookUpTable.Case.Case_4_2;
+				caseIndex = 6 * (c & 0x7F);
+			}
+			else
+			{
+				pcase = MC33LookUpTable.Case.Case_4_1;
+				caseIndex = 2 * (c & 0x7F);
+			}
+
+			break;
+		case 5: //********************************************
+			if ((c & 0x0080) != 0) m ^= 0x80;
+			pcase = MC33LookUpTable.Case.Case_5;
+			caseIndex = c & 0x7F;
+			break;
+		case 6: //********************************************
+			if ((c & 0x0080) != 0) m ^= 0x80;
+			if (((m != 0 ? i : i ^ 0xFF) & face_test1((c & 0x7F) % 6, v, v1)) != 0)
+			{
+				pcase = MC33LookUpTable.Case.Case_6_2;
+				caseIndex = 5 * (c & 0x7F);
+			}
+			else if (interior_test((c & 0x7F) / 6, 0, v, v1) != 0)
+			{
+				pcase = MC33LookUpTable.Case.Case_6_1_2;
+				caseIndex = 7 * (c & 0x7F);
+			}
+			else
+			{
+				pcase = MC33LookUpTable.Case.Case_6_1_1;
+				caseIndex = 3 * (c & 0x7F);
+			}
+
+			break;
+		case 7: //********************************************
+			if ((c & 0x0080) != 0) m ^= 0x80;
+			switch (face_tests(f, i, (m != 0 ? 1 : -1), v, v1))
+			{
+				case -3:
+					pcase = MC33LookUpTable.Case.Case_7_1;
+					caseIndex = 3 * (c & 0x7F);
+					break;
+				case -1:
+					if (f[4] + f[5] == 1)
+					{
+						pcase = MC33LookUpTable.Case.Case_7_2_1;
+						caseIndex = 5 * (c & 0x7F);
+					}
+					else
+					{
+						pcase = (f[(33825 >> ((c & 0x7F) << 1)) & 3] == 1
+							? MC33LookUpTable.Case.Case_7_2_3
+							: MC33LookUpTable.Case.Case_7_2_2);
+						caseIndex = 5 * (c & 0x7F);
+					}
+
+					break;
+				case 1:
+					if (f[4] + f[5] == -1)
+					{
+						pcase = MC33LookUpTable.Case.Case_7_3_3;
+						caseIndex = 9 * (c & 0x7F);
+					}
+					else
+					{
+						pcase = (f[(33825 >> ((c & 0x7F) << 1)) & 3] == 1
+							? MC33LookUpTable.Case.Case_7_3_2
+							: MC33LookUpTable.Case.Case_7_3_1);
+						caseIndex = 9 * (c & 0x7F);
+					}
+
+					break;
+				case 3:
+					if (interior_test((c & 0x7F) >> 1, 0, v, v1) != 0)
+					{
+						pcase = MC33LookUpTable.Case.Case_7_4_2;
+						caseIndex = 9 * (c & 0x7F);
+					}
+					else
+					{
+						pcase = MC33LookUpTable.Case.Case_7_4_1;
+						caseIndex = 5 * (c & 0x7F);
+					}
+
+					break;
+			}
+
+			break;
+		case 8: //********************************************
+			pcase = MC33LookUpTable.Case.Case_8;
+			caseIndex = (c & 0x7F);
+			break;
+		case 9: //********************************************
+			pcase = MC33LookUpTable.Case.Case_9;
+			caseIndex = (c & 0x7F);
+			break;
+		case 10: //********************************************
+			switch (face_tests(f, i, (m != 0 ? 1 : -1), v, v1))
+			{
+				case -2:
+				{
+					var a = interior_test(0, 0, v, v1) != 0;
+					var b = interior_test((c & 0x01) != 0 ? 1 : 3, 0, v, v1) != 0;
+					if ((c & 0x7F) != 0 ? (a || b) : interior_test(0, 0, v, v1) != 0)
+					{
+						pcase = MC33LookUpTable.Case.Case_10_1_2_1;
+						caseIndex = 8 * (c & 0x7F);
+					}
+					else
+					{
+						pcase = MC33LookUpTable.Case.Case_10_1_1_1;
+						caseIndex = 4 * (c & 0x7F);
+					}
+				}
+					break;
+				case 2:
+				{
+					var a = interior_test(2, 0, v, v1) != 0;
+					var b = interior_test((c & 0x01) != 0 ? 3 : 1, 0, v, v1) != 0;
+					if ((c & 0x7F) != 0 ? (a || b) : interior_test(1, 0, v, v1) != 0)
+					{
+						pcase = MC33LookUpTable.Case.Case_10_1_2_2;
+						caseIndex = 8 * (c & 0x7F);
+					}
+					else
+					{
+						pcase = MC33LookUpTable.Case.Case_10_1_1_2;
+						caseIndex = 4 * (c & 0x7F);
+					}
+				}
+					break;
+				case 0:
+					pcase = (f[4 >> ((c & 0x7F) << 1)] == 1
+						? MC33LookUpTable.Case.Case_10_2_2
+						: MC33LookUpTable.Case.Case_10_2_1);
+					caseIndex = 8 * (c & 0x7F);
+					break;
+			}
+
+			break;
+		case 11: //********************************************
+			pcase = MC33LookUpTable.Case.Case_11;
+			caseIndex = (c & 0x7F);
+			break;
+		case 12: //********************************************
+			switch (face_tests(f, i, (m != 0 ? 1 : -1), v, v1))
+			{
+				case -2:
+					if (interior_test((int)MC33LookUpTable._12_test_index[0, (int)(c & 0x7F)], 0, v, v1) != 0)
+					{
+						pcase = MC33LookUpTable.Case.Case_12_1_2_1;
+						caseIndex = 8 * (c & 0x7F);
+					}
+					else
+					{
+						pcase = MC33LookUpTable.Case.Case_12_1_1_1;
+						caseIndex = 4 * (c & 0x7F);
+					}
+
+					break;
+				case 2:
+					if (interior_test((int)MC33LookUpTable._12_test_index[1, (int)(c & 0x7F)], 0, v, v1) != 0)
+					{
+						pcase = MC33LookUpTable.Case.Case_12_1_2_2;
+						caseIndex = 8 * (c & 0x7F);
+					}
+					else
+					{
+						pcase = MC33LookUpTable.Case.Case_12_1_1_2;
+						caseIndex = 4 * (c & 0x7F);
+					}
+
+					break;
+				case 0:
+					pcase = (f[(int)MC33LookUpTable._12_test_index[2, (int)(c & 0x7F)]] == 1
+						? MC33LookUpTable.Case.Case_12_2_2
+						: MC33LookUpTable.Case.Case_12_2_1);
+					caseIndex = 8 * (c & 0x7F);
+					break;
+			}
+
+			break;
+		case 13: //********************************************
+			c = face_tests(f, i, (m != 0 ? 1 : -1), v, v1);
+			switch (Mathf.Abs(c))
+			{
+				case 6:
+					pcase = MC33LookUpTable.Case.Case_13_1;
+					caseIndex = 4 * ((c > 0) ? 1 : 0);
+					break;
+				case 4:
+					c >>= 2;
+					i = 0;
+					while (f[i] != -c)
+						++i;
+					pcase = MC33LookUpTable.Case.Case_13_2;
+					caseIndex = 6 * (3 * c + 3 + i);
+					i = 1;
+					break;
+				case 2:
+					c = (((((((((f[0] < 0) ? 1 : 0) << 1) | ((f[1] < 0) ? 1 : 0)) << 1) |
+					        ((f[2] < 0) ? 1 : 0)) << 1) |
+					      ((f[3] < 0) ? 1 : 0)) << 1) | ((f[4] < 0) ? 1 : 0);
+					pcase = MC33LookUpTable.Case.Case_13_3;
+					caseIndex = 10 * (25 - c + (((c > 10 ? 1 : 0) + (c > 20 ? 1 : 0)) << 1));
+					break;
+				case 0:
+					c = (((f[1] < 0) ? 1 : 0) << 1) | ((f[5] < 0) ? 1 : 0);
+					if (f[0] * f[1] * f[5] == 1)
+					{
+						pcase = MC33LookUpTable.Case.Case_13_4;
+						caseIndex = 12 * c;
+					}
+					else
+					{
+						i = interior_test(c, 1, v, v1);
+						if (i != 0)
+						{
+							pcase = MC33LookUpTable.Case.Case_13_5_2;
+							caseIndex = 10 * (c | ((i & 1) << 2));
+						}
+						else
+						{
+							pcase = MC33LookUpTable.Case.Case_13_5_1;
+							caseIndex = 6 * c;
+							i = 1;
+						}
+					}
+					break;
+			}
+			break;
+		case 14: //********************************************
+			pcase = MC33LookUpTable.Case.Case_14;
+			caseIndex = (c & 0x7F);
+			break;
+		}
+
+		while (i != 0)
+		{
+			i = MC33LookUpTable.LookUp(pcase, caseIndex++);
+			for (k = 0; k < 3; k++)
+			{
+				c = i & 0x0F;
+				if (p[c] < 0)
+				{
+					switch (c)
+					{
+					case 0:
+						if (z != 0 || x != 0)
+						{
+							p[0] = _Oy[y][x];
+						}
+						else
+						{
+							if(v[0] == 0.0f)
+							{
+								p[0] = surfint(0,y,0,r,n);
+								if(signbf(v[3])) p[3] = p[0];
+								if(signbf(v[4])) p[8] = p[0];
+							}
+							else if(v[1] == 0.0f)
+							{
+								p[0] = surfint(0,y + 1,0,r,n);
+								if(signbf(v[2])) _NL[0] = p[1] = p[0];
+								if(signbf(v[5])) _Ox[y + 1][0] = p[9] = p[0];
+							}
+							else
+							{
+								t = v[0] / (v[0] - v[1]);
+								r.x = r.z = 0.0f;
+								r.y = y + t;
+								n.x = (v[4] - v[0])*(1.0f - t) + (v[5] - v[1])*t;
+								n.y = v[1] - v[0];
+								n.z = (v[3] - v[0])*(1.0f - t) + (v[2] - v[1])*t;
+								// p[0] = store_point_normal(r,n);
+								p[0] = store_point_normal(r, n);
+							}
+						}
+						break;
+					}
+				}
+
+				f[k] = p[c];
+				i >>= 4;
+			}			
+			if (f[0] != f[1] && f[0] != f[2] && f[1] != f[2])
+			{
+#if MC_Normal_neg
+				if (m -= 0)
+#else
+				if (m != 0)
+#endif
+				{
+					f[2] = f[0];
+					f[0] = p[c];
+				}
+				store_triangle(new int3(f[0], f[1], f[2]));
+			}
+		}
+	}
+
+	private Mesh calc_isosurface(float iso, float[] cells)
+    {
+        _F = cells;
+        int x, y, z;
+        int nx = _MCn.x;
+        int ny = _MCn.y;
+        int nz = _MCn.z;
+        int i;
+        
+        var V = new float[12];
+        var v1 = 0;
+        var v2 = 4;
+        float V00, V10, V01, V11;
+
+        _MC_S = new surface();
+        _MC_S.ISO = iso;
+        _MC_S.dim2 = _MC_DVE;
+        _MC_S.V = new NativeList<float3>(4096, Allocator.Temp);
+        _MC_S.N = new NativeList<float3>(4096, Allocator.Temp);
+		_MC_S.T = new List<int>();
+		_MC_S.nT = 0;
+		_MC_S.nV = 0;
+        
+        for (z = 0; z < nz; z++)
+        {
+            for (y = 0; y < ny; y++)
+            {
+                V00 = GetCellValue(0, y, z);
+                V01 = GetCellValue(0, y + 1, z);
+                V10 = GetCellValue(0, y, z + 1);
+                V11 = GetCellValue(0, y + 1, z + 1);
+                V[v2] = iso - V00;
+                V[v2 + 1] = iso - V01;
+                V[v2 + 2] = iso - V11;
+                V[v2 + 3] = iso - V10;
+                //the eight least significant bits of i correspond to vertex indices. (x...x01234567)
+                //If the bit is 1 then the vertex value is greater than zero.
+                //i の下位8ビットは頂点インデックスに対応します。(x...x01234567)
+                //ビットが1の場合、頂点の値は0より大きいです。
+                i = ((V[v2 + 0] >= 0f ? 1 : 0) << 3) |
+                    ((V[v2 + 1] >= 0f ? 1 : 0) << 2) |
+                    ((V[v2 + 2] >= 0f ? 1 : 0) << 1) |
+                    ((V[v2 + 3] >= 0f ? 1 : 0) << 0);
+
+                for (x = 0; x < nx; x++)
+                {
+                    // swap v1 and v2
+                    (v1, v2) = (v2, v1);
+                    V00 = GetCellValue(x + 1, y, z);
+                    V01 = GetCellValue(x + 1, y + 1, z);
+                    V10 = GetCellValue(x + 1, y, z + 1);
+                    V11 = GetCellValue(x + 1, y + 1, z + 1);
+                    V[v2] = iso - V00;
+                    V[v2 + 1] = iso - V01;
+                    V[v2 + 2] = iso - V11;
+                    V[v2 + 3] = iso - V10;
+                    
+                    i = (i << 4) & 0xFF; // shift left 4 bits and keep only the last 8 bits
+                    i |= ((V[v2 + 0] >= 0f ? 1 : 0) << 3) |
+                         ((V[v2 + 1] >= 0f ? 1 : 0) << 2) |
+                         ((V[v2 + 2] >= 0f ? 1 : 0) << 1) |
+                         ((V[v2 + 3] >= 0f ? 1 : 0) << 0);
+
+                    if (i != 0 && i != 0xff)
+                    {
+                        if (v1 > v2)
+                        {
+                            V[v1 + 4] = V[v2 + 0];
+                            V[v1 + 5] = V[v2 + 1];
+                            V[v1 + 6] = V[v2 + 2];
+                            V[v1 + 7] = V[v2 + 3];
+                        }
+                        find_case(x,y,z,i,V,v1);
+                    }
+                }
+
+                (_OL, _NL) = (_NL, _OL);
+            }
+            (_Ox, _Nx) = (_Nx, _Ox);
+            (_Oy, _Ny) = (_Ny, _Oy);
+        }
+        
+        // ダミー実装
+        var mesh = new Mesh();
+        if (_MC_S.T.Count > 0)
+        {
+	        mesh.SetVertices(_MC_S.V.AsArray());
+	        mesh.SetTriangles(_MC_S.T, 0);
+	        mesh.SetNormals(_MC_S.N.AsArray());
+        }
+
+        return mesh;
+    }
+    
+    public Mesh calculate_isosurface(MC33Grid grd, float iso, float[] cells)
+    {
+        init_temp_isosurface(grd);
+        return calc_isosurface(iso, cells);
+    }
+    
+}

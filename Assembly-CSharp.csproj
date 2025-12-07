@@ -30,7 +30,7 @@
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <NoWarn>0169,0649</NoWarn>
-    <AllowUnsafeBlocks>False</AllowUnsafeBlocks>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>False</TreatWarningsAsErrors>
   </PropertyGroup>
   <PropertyGroup>
@@ -46,10 +46,13 @@
     <Analyzer Include="D:\Unity\Hub\Editor\6000.0.58f2\Editor\Data\Tools\Unity.SourceGenerators\Unity.UIToolkit.SourceGenerator.dll" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Assets\Scripts\MarchingCubesTest\MC33LookUpTable.cs" />
     <Compile Include="Assets\Scripts\PointDrawTest.cs" />
     <Compile Include="Assets\Scripts\CS\Particle.cs" />
     <Compile Include="Assets\Scripts\CS\MCTables.cs" />
+    <Compile Include="Assets\Scripts\MarchingCubesTest\MC33.cs" />
     <Compile Include="Assets\Scripts\MarchingCubesTest\MarchingCubeTest.cs" />
+    <Compile Include="Assets\Scripts\MarchingCubesTest\MC33Grid.cs" />
     <Compile Include="Assets\Scripts\1RenderPrimitivesIndexed\RenderPrimitivesIndexed.cs" />
     <Compile Include="Assets\Scripts\3MoveAppendConsume\MoveAppendConsume.cs" />
     <Compile Include="Assets\Scripts\5PBF_MarchingCubes\PBFMarchingCube.cs" />

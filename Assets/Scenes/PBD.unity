@@ -150,8 +150,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 694fe2dbf6f97cb4fb4f63afb75dce1e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  CubePrefab: {fileID: 3870361520681963794, guid: 16ac6e8f99105b743b925d2d66d3abf1, type: 3}
-  LinePrefab: {fileID: 2854150057468670881, guid: 0af0faf17118eb34a8ee6ba3ed113493, type: 3}
+  cubePrefab: {fileID: 3870361520681963794, guid: 16ac6e8f99105b743b925d2d66d3abf1, type: 3}
+  linePrefab: {fileID: 2854150057468670881, guid: 0af0faf17118eb34a8ee6ba3ed113493, type: 3}
+  isoLevel: 0.188
+  noiseOffset: {x: 1.06, y: 6.34, z: -0.58}
+  noiseScale: 0.09
+  gridSize: {x: 10, y: 10, z: 10}
 --- !u!4 &51283610
 Transform:
   m_ObjectHideFlags: 0
@@ -666,7 +670,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!64 &798574343
 MeshCollider:
   m_ObjectHideFlags: 0
