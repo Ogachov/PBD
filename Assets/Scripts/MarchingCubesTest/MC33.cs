@@ -242,6 +242,8 @@ are no joined (case 13.5.1)
 		_MC_S.nT++;
 	}
 
+	// rとnはオリジナルではポインタ渡しだが、C#ではstructの値渡しにした。
+	// オリジナルでもr,nの中身は戻り先で使ってないように見えるから要らなくないか？
 	private int surfint(int x, int y, int z, float3 r, float3 n)
 	{
 		r.x = x;
