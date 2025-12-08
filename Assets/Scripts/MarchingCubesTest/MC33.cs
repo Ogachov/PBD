@@ -28,6 +28,7 @@ public class MC33
         public List<int> T;
         public NativeList<float3> V;
         public NativeList<float3> N;
+        public NativeList<Color> C;
     }
     private surface _MC_S;
     
@@ -45,6 +46,8 @@ public class MC33
     private int[] _NL;
 
     private float[] _F;
+
+    private int _debugParam;
 
     private void init_temp_isosurface(MC33Grid grd)
     {
@@ -72,9 +75,8 @@ public class MC33
     
     private float GetCellValue(int x, int y, int z)
     {
-        int nx = _MCn.x;
+        int nx = _MCn.x + 1;
         int ny = _MCn.y + 1;
-        int nz = _MCn.z + 1;
         return _F[x + y * nx + z * nx * ny];
     }
 
@@ -216,10 +218,18 @@ are no joined (case 13.5.1)
 		return 0;
 	}
 	
-	private int store_point_normal(float3 r, float3 n)
+	private int store_point_normal(float3 r, float3 n, Color c)
 	{
-		_MC_S.V.Add(r);
+		// 法線nを正規化する
+#if MC_Normal_neg
+		n = -math.normalize(n);
+#else
+		n = math.normalize(n);
+#endif
+			
+		_MC_S.V.Add(r * _MC_D + _MC_O);
 		_MC_S.N.Add(n);
+		_MC_S.C.Add(c);
 		_MC_S.nV++;
 		return (_MC_S.nV - 1);
 	}
@@ -248,27 +258,27 @@ are no joined (case 13.5.1)
 			n.x = 0.5f * (GetCellValue(x - 1, y, z) - GetCellValue(x + 1, y, z));
 
 		if (y == 0)
-			// n[1] = _MC_F[z][0][x] - _MC_F[z][1][x];
+			// n.y = _MC_F[z][0][x] - _MC_F[z][1][x];
 			n.y = GetCellValue(x, 0, z) - GetCellValue(x, 1, z);
 		else if (y == _MCn.y)
-			// n[1] = _MC_F[z][y - 1][x] - _MC_F[z][y][x];
+			// n.y = _MC_F[z][y - 1][x] - _MC_F[z][y][x];
 			n.y = GetCellValue(x, y - 1, z) - GetCellValue(x, y, z);
 		else
-			// n[1] = 0.5f*(_MC_F[z][y - 1][x] - _MC_F[z][y + 1][x]);
+			// n.y = 0.5f*(_MC_F[z][y - 1][x] - _MC_F[z][y + 1][x]);
 			n.y = 0.5f * (GetCellValue(x, y - 1, z) - GetCellValue(x, y + 1, z));
 
 		if (z == 0)
-			// n[2] = _MC_F[0][y][x] - _MC_F[1][y][x];
+			// n.z = _MC_F[0][y][x] - _MC_F[1][y][x];
 			n.z = GetCellValue(x, y, 0) - GetCellValue(x, y, 1);
 		else if (z == _MCn.z)
-			// n[2] = _MC_F[z - 1][y][x] - _MC_F[z][y][x];
+			// n.z = _MC_F[z - 1][y][x] - _MC_F[z][y][x];
 			n.z = GetCellValue(x, y, z - 1) - GetCellValue(x, y, z);
 		else
-			// n[2] = 0.5f*(_MC_F[z - 1][y][x] - _MC_F[z + 1][y][x]);
+			// n.z = 0.5f*(_MC_F[z - 1][y][x] - _MC_F[z + 1][y][x]);
 			n.z = 0.5f * (GetCellValue(x, y, z - 1) - GetCellValue(x, y, z + 1));
 
 		// return store_point_normal(r,n);
-		return store_point_normal(r, n);
+		return store_point_normal(r, n, Color.green);
 	}
 
 /******************************************************************
@@ -585,6 +595,7 @@ and used here.
 				c = i & 0x0F;
 				if (p[c] < 0)
 				{
+					var col = c == _debugParam ? Color.red : Color.white;
 					switch (c)
 					{
 					case 0:
@@ -594,31 +605,448 @@ and used here.
 						}
 						else
 						{
-							if(v[0] == 0.0f)
+							if(v[v1 + 0] == 0.0f)
 							{
 								p[0] = surfint(0,y,0,r,n);
-								if(signbf(v[3])) p[3] = p[0];
-								if(signbf(v[4])) p[8] = p[0];
+								if(signbf(v[v1 + 3])) p[3] = p[0];
+								if(signbf(v[v1 + 4])) p[8] = p[0];
 							}
-							else if(v[1] == 0.0f)
+							else if(v[v1 + 1] == 0.0f)
 							{
 								p[0] = surfint(0,y + 1,0,r,n);
-								if(signbf(v[2])) _NL[0] = p[1] = p[0];
-								if(signbf(v[5])) _Ox[y + 1][0] = p[9] = p[0];
+								if(signbf(v[v1 + 2])) _NL[0] = p[1] = p[0];
+								if(signbf(v[v1 + 5])) _Ox[y + 1][0] = p[9] = p[0];
 							}
 							else
 							{
-								t = v[0] / (v[0] - v[1]);
+								t = v[v1 + 0] / (v[v1 + 0] - v[v1 + 1]);
 								r.x = r.z = 0.0f;
 								r.y = y + t;
-								n.x = (v[4] - v[0])*(1.0f - t) + (v[5] - v[1])*t;
-								n.y = v[1] - v[0];
-								n.z = (v[3] - v[0])*(1.0f - t) + (v[2] - v[1])*t;
+								n.x = (v[v1 + 4] - v[v1 + 0])*(1.0f - t) + (v[v1 + 5] - v[v1 + 1])*t;
+								n.y = v[v1 + 1] - v[v1 + 0];
+								n.z = (v[v1 + 3] - v[v1 + 0])*(1.0f - t) + (v[v1 + 2] - v[v1 + 1])*t;
 								// p[0] = store_point_normal(r,n);
-								p[0] = store_point_normal(r, n);
+								p[0] = store_point_normal(r, n, col);
 							}
 						}
 						break;
+					case 1:
+						if(x != 0)
+							p[1] = _NL[x];
+						else
+						{
+							if(v[v1 + 1] == 0.0f)
+							{
+								_NL[0] = p[1] = surfint(0,y + 1,z,r,n);
+								if(signbf(v[v1 + 0])) p[0] = p[1];
+								if(signbf(v[v1 + 5]))
+								{
+									p[9] = p[1];
+									if(z == 0) _Ox[y + 1][0] = p[9];
+								}
+							}
+							else if(v[v1 + 2] == 0.0f)
+							{
+								_NL[0] = p[1] = surfint(0,y + 1,z + 1,r,n);
+								if(signbf(v[v1 + 3])) _Ny[y][0] = p[2] = p[1];
+								if(signbf(v[v1 + 6])) _Nx[y + 1][0] = p[10] = p[1];
+							}
+							else
+							{
+								t = v[v1 + 1]/(v[v1 + 1] - v[v1 + 2]);
+								r.x = 0.0f; r.y = y + 1;
+								r.z = z + t;
+								n.x = (v[v1 + 5] - v[v1 + 1])*(1.0f - t) + (v[v1 + 6] - v[v1 + 2])*t;
+								n.y = (y + 1 < _MCn.y? 0.5f*((GetCellValue(0,y,z) - GetCellValue(0,y+2,z))*(1.0f - t) + (GetCellValue(0,y,z+1) - GetCellValue(0,y+2,z+1))*t): (v[v1 + 1] - v[v1 + 0])*(1.0f - t) + (v[v1 + 2] - v[v1 + 3])*t);
+								n.z = v[v1 + 2] - v[v1 + 1];
+								_NL[0] = p[1] = store_point_normal(r,n, col);
+							}
+						}
+						break;
+					case 2:	
+						if(x != 0)
+							p[2] = _Ny[y][x];
+						else
+						{
+							if(v[v1 + 3] == 0.0f)
+							{
+								_Ny[y][0] = p[2] = surfint(0,y,z + 1,r,n);
+								if(signbf(v[v1 + 0])) p[3] = p[2];
+								if(signbf(v[v1 + 7]))
+								{
+									p[11] = p[2];
+									if(y == 0) _Nx[0][0] = p[11];
+								}
+							}
+							else if(v[v1 + 2] == 0.0f)
+							{
+								_Ny[y][0] = p[2] = surfint(0,y + 1,z + 1,r,n);
+								if(signbf(v[v1 + 1])) _NL[0] = p[1] = p[2];
+								if(signbf(v[v1 + 6])) _Nx[y + 1][0] = p[10] = p[2];
+							}
+							else
+							{
+								t = v[v1 + 3]/(v[v1 + 3] - v[v1 + 2]);
+								r.x = 0.0f; r.z = z + 1;
+								r.y = y + t;
+								n.x = (v[v1 + 7] - v[v1 + 3])*(1.0f - t) + (v[v1 + 6] - v[v1 + 2])*t;
+								n.y = v[v1 + 2] - v[v1 + 3];
+								n.z = (z + 1 < _MCn.z? 0.5f*((GetCellValue(0,y,z) - GetCellValue(0,y,z+2))*(1.0f - t)
+								                             + (GetCellValue(0,y+1,z) - GetCellValue(0,y+1,z+2))*t):
+									(v[v1 + 3] - v[v1 + 0])*(1.0f - t) + (v[v1 + 2] - v[v1 + 1])*t);
+								_Ny[y][0] = p[2] = store_point_normal(r,n,col);
+							}
+						}
+						break;
+					case 3:
+						if(y != 0 || x != 0)
+							p[3] = _OL[x];
+						else
+						{
+							if(v[v1 + 0] == 0.0f)
+							{
+								p[3] = surfint(0,0,z,r,n);
+								if(signbf(v[v1 + 1])) p[0] = p[3];
+								if(signbf(v[v1 + 4])) p[8] = p[3];
+							}
+							else if(v[v1 + 3] == 0.0f)
+							{
+								p[3] = surfint(0,0,z + 1,r,n);
+								if(signbf(v[v1 + 2])) _Ny[0][0] = p[2] = p[3];
+								if(signbf(v[v1 + 7])) _Nx[0][0] = p[11] = p[3];
+							}
+							else
+							{
+								t = v[v1 + 0]/(v[v1 + 0] - v[v1 + 3]);
+								r.x = r.y = 0.0f;
+								r.z = z + t;
+								n.x = (v[v1 + 4] - v[v1 + 0])*(1.0f - t) + (v[v1 + 7] - v[v1 + 3])*t;
+								n.y = (v[v1 + 1] - v[v1 + 0])*(1.0f - t) + (v[v1 + 2] - v[v1 + 3])*t;
+								n.z = v[v1 + 3] - v[v1 + 0];
+								p[3] = store_point_normal(r,n,col);
+							}
+						}
+						break;
+					case 4:
+						if(z != 0)
+							p[4] = _Oy[y][x + 1];
+						else
+						{
+							if(v[v1 + 4] == 0.0f)
+							{
+								_Oy[y][x + 1] = p[4] = surfint(x + 1,y,0,r,n);
+								if(signbf(v[v1 + 7])) p[7] = p[4];
+								if(signbf(v[v1 + 0])) p[8] = p[4];
+								if(y == 0)
+									_OL[x + 1] = p[7];
+							}
+							else if(v[v1 + 5] == 0.0f)
+							{
+								_Oy[y][x + 1] = p[4] = surfint(x + 1,y + 1,0,r,n);
+								if(signbf(v[v1 + 6])) _NL[x + 1] = p[5] = p[4];
+								if(signbf(v[v1 + 1])) _Ox[y + 1][x] = p[9] = p[4];
+							}
+							else
+							{
+								t = v[v1 + 4]/(v[v1 + 4] - v[v1 + 5]);
+								r.x = x + 1; r.z = 0.0f;
+								r.y = y + t;
+								n.x = (x + 1 < _MCn.x? 0.5f*((GetCellValue(x,y,0) - GetCellValue(x+2,y,0))*(1.0f - t)
+								                             + (GetCellValue(x,y+1,0) - GetCellValue(x+2,y+1,0))*t):
+									(v[v1 + 4] - v[v1 + 0])*(1.0f - t) + (v[v1 + 5] - v[v1 + 1])*t);
+								n.y = v[v1 + 5] - v[v1 + 4];
+								n.z = (v[v1 + 7] - v[v1 + 4])*(1.0f - t) + (v[v1 + 6] - v[v1 + 5])*t;
+								_Oy[y][x + 1] = p[4] = store_point_normal(r,n,col);
+							}
+						}
+						break;
+					case 5:
+						if(v[v1 + 5] == 0.0f)
+						{
+							if(signbf(v[v1 + 4]))
+							{
+								if(z != 0)
+								{
+									_NL[x + 1] = p[5] = p[4] = _Oy[y][x + 1];
+									if(signbf(v[v1 + 1])) p[9] = p[5];
+								}
+								else
+								{
+									_NL[x + 1] = p[5] = _Oy[y][x + 1] = p[4] = surfint(x + 1,y + 1,0,r,n);
+									if(signbf(v[v1 + 1])) _Ox[y + 1][x] = p[9] = p[5];
+								}
+							}
+							else if(signbf(v[v1 + 1]))
+							{
+								if(z != 0)
+									_NL[x + 1] = p[5] = p[9] = _Ox[y + 1][x];
+								else
+									_NL[x + 1] = p[5] = _Ox[y + 1][x] = p[9] = surfint(x + 1,y + 1,0,r,n);
+							}
+							else
+								_NL[x + 1] = p[5] = surfint(x + 1,y + 1,z,r,n);
+						}
+						else if(v[v1 + 6] == 0.0f)
+						{
+							_NL[x + 1] = p[5] = surfint(x + 1,y + 1,z + 1,r,n);
+							if(signbf(v[v1 + 2])) _Nx[y + 1][x] = p[10] = p[5];
+							if(signbf(v[v1 + 7])) _Ny[y][x + 1] = p[6] = p[5];
+						}
+						else
+						{
+							t = v[v1 + 5]/(v[v1 + 5] - v[v1 + 6]);
+							r.x = x + 1; r.y = y + 1;
+							r.z = z + t;
+							n.x = (x + 1 < _MCn.x? 0.5f*((GetCellValue(x,y+1,z) - GetCellValue(x+2,y+1,z))*(1.0f - t)
+							                             + (GetCellValue(x,y+1,z+1) - GetCellValue(x+2,y+1,z+1))*t):
+								(v[v1 + 5] - v[v1 + 1])*(1.0f - t) + (v[v1 + 6] - v[v1 + 2])*t);
+							n.y = (y + 1 < _MCn.y? 0.5f*((GetCellValue(x+1,y,z) - GetCellValue(x+1,y+2,z))*(1.0f - t)
+							                             + (GetCellValue(x+1,y,z+1) - GetCellValue(x+1,y+2,z+1))*t):
+								(v[v1 + 5] - v[v1 + 4])*(1.0f - t) + (v[v1 + 6] - v[v1 + 7])*t);
+							n.z = v[v1 + 6] - v[v1 + 5];
+							_NL[x + 1] = p[5] = store_point_normal(r,n,col);
+						}
+						break;
+				case 6:
+					if(v[v1 + 7] == 0.0f)
+					{
+						if(signbf(v[v1 + 3]))
+						{
+							if(y != 0)
+							{
+								_Ny[y][x + 1] = p[6] = p[11] = _Nx[y][x];
+								if(signbf(v[v1 + 4])) p[7] = p[6];
+							}
+							else
+							{
+								_Ny[y][x + 1] = p[6] = _Nx[0][x] = p[11] = surfint(x + 1,0,z + 1,r,n);
+								if(signbf(v[v1 + 4])) _OL[x + 1] = p[7] = p[6];
+							}
+						}
+						else if(signbf(v[v1 + 4]))
+						{
+							if(y != 0)
+								_Ny[y][x + 1] = p[6] = p[7] = _OL[x + 1];
+							else
+								_Ny[y][x + 1] = p[6] = _OL[x + 1] = p[7] = surfint(x + 1,0,z + 1,r,n);
+						}
+						else
+							_Ny[y][x + 1] = p[6] = surfint(x + 1,y,z + 1,r,n);
+					}
+					else if(v[v1 + 6] == 0.0f)
+					{
+						_Ny[y][x + 1] = p[6] = surfint(x + 1,y + 1,z + 1,r,n);
+						if(signbf(v[v1 + 5])) _NL[x + 1] = p[5] = p[6];
+						if(signbf(v[v1 + 2])) _Nx[y + 1][x] = p[10] = p[6];
+					}
+					else
+					{
+						t = v[v1 + 7]/(v[v1 + 7] - v[v1 + 6]);
+						r.x = x + 1; r.z = z + 1;
+						r.y = y + t;
+						n.x = (x + 1 < _MCn.x? 0.5f*((GetCellValue(x,y,z+1) - GetCellValue(x+2,y,z+1))*(1.0f - t)
+									+ (GetCellValue(x,y+1,z+1) - GetCellValue(x+2,y+1,z+1))*t):
+									(v[v1 + 7] - v[v1 + 3])*(1.0f - t) + (v[v1 + 6] - v[v1 + 2])*t);
+						n.y = v[v1 + 6] - v[v1 + 7];
+						n.z = (z + 1 < _MCn.z? 0.5f*((GetCellValue(x+1,y,z) - GetCellValue(x+1,y,z+2))*(1.0f - t)
+										+ (GetCellValue(x+1,y+1,z) - GetCellValue(x+1,y+1,z+2))*t):
+									(v[v1 + 7] - v[v1 + 4])*(1.0f - t) + (v[v1 + 6] - v[v1 + 5])*t);
+						_Ny[y][x + 1] = p[6] = store_point_normal(r,n,col);
+					}
+					break;
+				case 7:
+					if(y != 0)
+						p[7] = _OL[x + 1];
+					else
+					{
+						if(v[v1 + 4] == 0.0f)
+						{
+							_OL[x + 1] = p[7] = surfint(x + 1,0,z,r,n);
+							if(signbf(v[v1 + 0])) p[8] = p[7];
+							if(signbf(v[v1 + 5]))
+							{
+								p[4] = p[7];
+								if(z == 0)
+									_Oy[0][x + 1] = p[4];
+							}
+						}
+						else if(v[v1 + 7] == 0.0f)
+						{
+							_OL[x + 1] = p[7] = surfint(x + 1,0,z + 1,r,n);
+							if(signbf(v[v1 + 6])) _Ny[0][x + 1] = p[6] = p[7];
+							if(signbf(v[v1 + 3])) _Nx[0][x] = p[11] = p[7];
+						}
+						else
+						{
+							t = v[v1 + 4]/(v[v1 + 4] - v[v1 + 7]);
+							r.x = x + 1; r.y = 0.0f;
+							r.z = z + t;
+							n.x = (x + 1 < _MCn.x? 0.5f*((GetCellValue(x,0,z) - GetCellValue(x+2,0,z))*(1.0f - t)
+										+ (GetCellValue(x,0,z+1) - GetCellValue(x+2,0,z+1))*t):
+										(v[v1 + 4] - v[v1 + 0])*(1.0f - t) + (v[v1 + 7] - v[v1 + 3])*t);
+							n.y = (v[v1 + 5] - v[v1 + 4])*(1.0f - t) + (v[v1 + 6] - v[v1 + 7])*t;
+							n.z = v[v1 + 7] - v[v1 + 4];
+							_OL[x + 1] = p[7] = store_point_normal(r,n,col);
+						}
+					}
+					break;
+				case 8:
+					if(z != 0 || y != 0)
+						p[8] = _Ox[y][x];
+					else
+					{
+						if(v[v1 + 0] == 0.0f)
+						{
+							p[8] = surfint(x,0,0,r,n);
+							if(signbf(v[v1 + 1])) p[0] = p[8];
+							if(signbf(v[v1 + 3])) p[3] = p[8];
+						}
+						else if(v[v1 + 4] == 0.0f)
+						{
+							p[8] = surfint(x + 1,0,0,r,n);
+							if(signbf(v[v1 + 5]))
+								_Oy[0][x + 1] = p[4] = p[8];
+							if(signbf(v[v1 + 7]))
+								_OL[x + 1] = p[7] = p[8];
+						}
+						else
+						{
+							t = v[v1 + 0]/(v[v1 + 0] - v[v1 + 4]);
+							r.y = r.z = 0.0f;
+							r.x = x + t;
+							n.x = v[v1 + 4] - v[v1 + 0];
+							n.y = (v[v1 + 1] - v[v1 + 0])*(1.0f - t) + (v[v1 + 5] - v[v1 + 4])*t;
+							n.z = (v[v1 + 3] - v[v1 + 0])*(1.0f - t) + (v[v1 + 7] - v[v1 + 4])*t;
+							p[8] = store_point_normal(r,n,col);
+						}
+					}
+					break;
+				case 9:
+					if(z != 0)
+						p[9] = _Ox[y + 1][x];
+					else
+					{
+						if(v[v1 + 1] == 0.0f)
+						{
+							_Ox[y + 1][x] = p[9] = surfint(x,y + 1,0,r,n);
+							if(signbf(v[v1 + 2]))
+							{
+								p[1] = p[9];
+								if(x == 0) _NL[0] = p[1];
+							}
+							if(signbf(v[v1 + 0])) p[0] = p[9];
+						}
+						else if(v[v1 + 5] == 0.0f)
+						{
+							_Ox[y + 1][x] = p[9] = surfint(x + 1,y + 1,0,r,n);
+							if(signbf(v[v1 + 6])) _NL[x + 1] = p[5] = p[9];
+							if(signbf(v[v1 + 4])) _Oy[y][x + 1] = p[4] = p[9];
+						}
+						else
+						{
+							t = v[v1 + 1]/(v[v1 + 1] - v[v1 + 5]);
+							r.y = y + 1; r.z = 0.0f;
+							r.x = x + t;
+							n.x = v[v1 + 5] - v[v1 + 1];
+							n.y = (y + 1 < _MCn.y? 0.5f*((GetCellValue(x,y,0) - GetCellValue(x,y+2,0))*(1.0f - t)
+										+ (GetCellValue(x+1,y,0) - GetCellValue(x+1,y+2,0))*t):
+										(v[v1 + 1] - v[v1 + 0])*(1.0f - t) + (v[v1 + 5] - v[v1 + 4])*t);
+							n.z = (v[v1 + 2] - v[v1 + 1])*(1.0f - t) + (v[v1 + 6] - v[v1 + 5])*t;
+							_Ox[y + 1][x] = p[9] = store_point_normal(r,n,col);
+						}
+					}
+					break;
+				case 10:
+					if(v[v1 + 2] == 0.0f)
+					{
+						if(signbf(v[v1 + 1]))
+						{
+							if(x != 0)
+							{
+								_Nx[y + 1][x] = p[10] = p[1] = _NL[x];
+								if(signbf(v[v1 + 3])) p[2] = p[10];
+							}
+							else
+							{
+								_Nx[y + 1][0] = p[10] = _NL[0] = p[1] = surfint(0,y + 1,z + 1,r,n);
+								if(signbf(v[v1 + 3])) _Ny[y][0] = p[2] = p[10];
+							}
+						}
+						else if(signbf(v[v1 + 3]))
+						{
+							if(x != 0)
+								_Nx[y + 1][x] = p[10] = p[2] = _Ny[y][x];
+							else
+								_Nx[y + 1][0] = p[10] = _Ny[y][0] = p[2] = surfint(0,y + 1,z + 1,r,n);
+						}
+						else
+							_Nx[y + 1][x] = p[10] = surfint(x,y + 1,z + 1,r,n);
+					}
+					else if(v[v1 + 6] == 0.0f)
+					{
+						_Nx[y + 1][x] = p[10] = surfint(x + 1,y + 1,z + 1,r,n);
+						if(signbf(v[v1 + 5])) _NL[x + 1] = p[5] = p[10];
+						if(signbf(v[v1 + 7])) _Ny[y][x + 1] = p[6] = p[10];
+					}
+					else
+					{
+						t = v[v1 + 2]/(v[v1 + 2] - v[v1 + 6]);
+						r.y = y + 1; r.z = z + 1;
+						r.x = x + t;
+						n.x = v[v1 + 6] - v[v1 + 2];
+						n.y = (y + 1 < _MCn.y? 0.5f*((GetCellValue(x,y,z+1) - GetCellValue(x,y+2,z+1))*(1.0f - t)
+									+ (GetCellValue(x+1,y,z+1) - GetCellValue(x+1,y+2,z+1))*t):
+									(v[v1 + 2] - v[v1 + 3])*(1.0f - t) + (v[v1 + 6] - v[v1 + 7])*t);
+						n.z = (z + 1 < _MCn.z? 0.5f*((GetCellValue(x,y+1,z) - GetCellValue(x,y+1,z+2))*(1.0f - t)
+									+ (GetCellValue(x+1,y+1,z) - GetCellValue(x+1,y+1,z+2))*t):
+									(v[v1 + 2] - v[v1 + 1])*(1.0f - t) + (v[v1 + 6] - v[v1 + 5])*t);
+						_Nx[y + 1][x] = p[10] = store_point_normal(r,n,col);
+					}
+					break;
+				case 11:
+					if(y != 0)
+						p[11] = _Nx[y][x];
+					else
+					{
+						if(v[v1 + 3] == 0.0f)
+						{
+							_Nx[0][x] = p[11] = surfint(x,0,z + 1,r,n);
+							if(signbf(v[v1 + 0])) p[3] = p[11];
+							if(signbf(v[v1 + 2]))
+							{
+								p[2] = p[11];
+								if(x == 0)
+									_Ny[0][0] = p[2];
+							}
+						}
+						else if(v[v1 + 7] == 0.0f)
+						{
+							_Nx[0][x] = p[11] = surfint(x + 1,0,z + 1,r,n);
+							if(signbf(v[v1 + 4])) _OL[x + 1] = p[7] = p[11];
+							if(signbf(v[v1 + 6])) _Ny[0][x + 1] = p[6] = p[11];
+						}
+						else
+						{
+							t = v[v1 + 3]/(v[v1 + 3] - v[v1 + 7]);
+							r.y = 0.0f; r.z = z + 1;
+							r.x = x + t;
+							n.x = v[v1 + 7] - v[v1 + 3];
+							n.y = (v[v1 + 2] - v[v1 + 3])*(1.0f - t) + (v[v1 + 6] - v[v1 + 7])*t;
+							n.z = (z + 1 < _MCn.z? 0.5f*((GetCellValue(x,0,z) - GetCellValue(x,0,z+2))*(1.0f - t)
+										+ (GetCellValue(x+1,0,z) - GetCellValue(x+1,0,z+2))*t):
+										(v[v1 + 3] - v[v1 + 0])*(1.0f - t) + (v[v1 + 7] - v[v1 + 4])*t);
+							_Nx[0][x] = p[11] = store_point_normal(r,n,col);
+						}
+					}
+					break;
+				case 12:
+					r.x = x + 0.5f; r.y = y + 0.5f; r.z = z + 0.5f;
+					n.x = v[v1 + 4] + v[v1 + 5] + v[v1 + 6] + v[v1 + 7] - v[v1 + 0] - v[v1 + 1] - v[v1 + 2] - v[v1 + 3];
+					n.y = v[v1 + 1] + v[v1 + 2] + v[v1 + 5] + v[v1 + 6] - v[v1 + 0] - v[v1 + 3] - v[v1 + 4] - v[v1 + 7];
+					n.z = v[v1 + 2] + v[v1 + 3] + v[v1 + 6] + v[v1 + 7] - v[v1 + 0] - v[v1 + 1] - v[v1 + 4] - v[v1 + 5];
+					p[12] = store_point_normal(r,n,col);
+					break;
+					
 					}
 				}
 
@@ -628,9 +1056,9 @@ and used here.
 			if (f[0] != f[1] && f[0] != f[2] && f[1] != f[2])
 			{
 #if MC_Normal_neg
-				if (m -= 0)
-#else
 				if (m != 0)
+#else
+				if (m == 0)
 #endif
 				{
 					f[2] = f[0];
@@ -660,6 +1088,7 @@ and used here.
         _MC_S.dim2 = _MC_DVE;
         _MC_S.V = new NativeList<float3>(4096, Allocator.Temp);
         _MC_S.N = new NativeList<float3>(4096, Allocator.Temp);
+        _MC_S.C = new NativeList<Color>(4096, Allocator.Temp);
 		_MC_S.T = new List<int>();
 		_MC_S.nT = 0;
 		_MC_S.nV = 0;
@@ -672,7 +1101,7 @@ and used here.
                 V01 = GetCellValue(0, y + 1, z);
                 V10 = GetCellValue(0, y, z + 1);
                 V11 = GetCellValue(0, y + 1, z + 1);
-                V[v2] = iso - V00;
+                V[v2 + 0] = iso - V00;
                 V[v2 + 1] = iso - V01;
                 V[v2 + 2] = iso - V11;
                 V[v2 + 3] = iso - V10;
@@ -693,7 +1122,7 @@ and used here.
                     V01 = GetCellValue(x + 1, y + 1, z);
                     V10 = GetCellValue(x + 1, y, z + 1);
                     V11 = GetCellValue(x + 1, y + 1, z + 1);
-                    V[v2] = iso - V00;
+                    V[v2 + 0] = iso - V00;
                     V[v2 + 1] = iso - V01;
                     V[v2 + 2] = iso - V11;
                     V[v2 + 3] = iso - V10;
@@ -730,13 +1159,16 @@ and used here.
 	        mesh.SetVertices(_MC_S.V.AsArray());
 	        mesh.SetTriangles(_MC_S.T, 0);
 	        mesh.SetNormals(_MC_S.N.AsArray());
+	        mesh.SetColors(_MC_S.C.AsArray());
         }
 
         return mesh;
     }
     
-    public Mesh calculate_isosurface(MC33Grid grd, float iso, float[] cells)
+    public Mesh calculate_isosurface(MC33Grid grd, float iso, float[] cells, int debugParam)
     {
+	    _debugParam = debugParam;
+	    
         init_temp_isosurface(grd);
         return calc_isosurface(iso, cells);
     }
