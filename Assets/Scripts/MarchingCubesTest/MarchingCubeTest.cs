@@ -4,16 +4,17 @@ using UnityEngine;
 
 public class MarchingCubeTest : MonoBehaviour
 {
-    [SerializeField]private GameObject cubePrefab;
-    [SerializeField]private GameObject linePrefab;
-    [SerializeField, Range(0f,1.0f)]private float isoLevel = 0.5f;
-    [SerializeField]private bool UseNoise = false;
-    [SerializeField]private Vector3 noiseOffset = Vector3.zero;
-    [SerializeField]private float noiseScale = 1.0f;
-    [SerializeField]private Vector3 gridSize = new Vector3(10f,10f,10f);
-    
-    [SerializeField]private bool UseSphere = false;
-    [SerializeField]private float sphereRadius = 1.0f;
+    [SerializeField] private bool prepareComputeShader = false;
+    [SerializeField] private GameObject cubePrefab;
+    [SerializeField] private bool drawCubes = false;
+    [SerializeField, Range(0f, 1.0f)] private float isoLevel = 0.5f;
+    [SerializeField] private bool UseNoise = false;
+    [SerializeField] private Vector3 noiseOffset = Vector3.zero;
+    [SerializeField] private float noiseScale = 1.0f;
+    [SerializeField] private Vector3 gridSize = new Vector3(10f, 10f, 10f);
+
+    [SerializeField] private bool UseSphere = false;
+    [SerializeField] private float sphereRadius = 1.0f;
 
     [SerializeField, Range(0, 12)] private int debugParam;
 
@@ -23,15 +24,18 @@ public class MarchingCubeTest : MonoBehaviour
     private Vector3 _lastGridSize;
     private float _lastSphereRadius;
     private int _lastDebugParam;
-    
+
     private float[] _cells;
     private List<GameObject> _cubes = new List<GameObject>();
-    
+
     private MC33 _mc33 = new MC33();
-    
-    private int3 _gridN;    // 各次元ごとのグリッド数
-    private int3 _cellN;    // 各次元ごとのセル数（グリッドを描画するための周囲の情報数なのでグリッド＋１の大きさになる）
-    
+
+    // ComputeShader化するために各グリッドを独立して計算するように変更したバージョン
+    private MC33PrepareCS _mc33PrepareCS = new MC33PrepareCS();
+
+    private int3 _gridN; // 各次元ごとのグリッド数
+    private int3 _cellN; // 各次元ごとのセル数（グリッドを描画するための周囲の情報数なのでグリッド＋１の大きさになる）
+
     private MeshFilter _meshFilter;
 
     private void Start()
@@ -41,30 +45,47 @@ public class MarchingCubeTest : MonoBehaviour
 
     private void Update()
     {
-        if (!Mathf.Approximately(isoLevel, _lastIsoLevel) || noiseOffset != _lastNoiseOffset || !Mathf.Approximately(noiseScale, _lastNoiseScale) || gridSize != _lastGridSize || debugParam != _lastDebugParam || !Mathf.Approximately(_lastSphereRadius, sphereRadius))
+        if (!Mathf.Approximately(isoLevel, _lastIsoLevel) || noiseOffset != _lastNoiseOffset ||
+            !Mathf.Approximately(noiseScale, _lastNoiseScale) || gridSize != _lastGridSize ||
+            debugParam != _lastDebugParam || !Mathf.Approximately(_lastSphereRadius, sphereRadius))
         {
             MakeCells();
-            DrawCubes();
-            _lastIsoLevel = isoLevel;
-            _lastNoiseOffset = noiseOffset;
-            _lastNoiseScale = noiseScale;
-            _lastGridSize = gridSize;
-            _lastSphereRadius = sphereRadius;
-            _lastDebugParam = debugParam;
-            
-            var grid = new MC33Grid
+            if (drawCubes)
             {
-                N = _gridN,
-                L = new float3(_gridN),
-                r0 = new float3( -0.5f * _gridN.x, 0f, -0.5f * _gridN.z),
-                d = new float3(1.0f, 1.0f, 1.0f)
-            };
+                DrawCubes();
+            }
+        }
+
+        _lastIsoLevel = isoLevel;
+        _lastNoiseOffset = noiseOffset;
+        _lastNoiseScale = noiseScale;
+        _lastGridSize = gridSize;
+        _lastSphereRadius = sphereRadius;
+        _lastDebugParam = debugParam;
+
+        var grid = new MC33Grid
+        {
+            N = _gridN,
+            L = new float3(_gridN),
+            r0 = new float3(-0.5f * _gridN.x, 0f, -0.5f * _gridN.z),
+            d = new float3(1.0f, 1.0f, 1.0f)
+        };
+
+        if (prepareComputeShader)
+        {
+            var mesh = _mc33PrepareCS.calculate_isosurface(grid, isoLevel, _cells, debugParam);
+            mesh.name = "MC33_isosurface";
+            _meshFilter.mesh = mesh;
+        }
+        else
+        {
             var mesh = _mc33.calculate_isosurface(grid, isoLevel, _cells, debugParam);
             mesh.name = "MC33_isosurface";
             _meshFilter.mesh = mesh;
         }
     }
-    
+
+
     private void MakeCells()
     {
         var gridSizeX = Mathf.FloorToInt(Mathf.Max(gridSize.x, 2));
@@ -73,7 +94,7 @@ public class MarchingCubeTest : MonoBehaviour
         _gridN = new int3(gridSizeX, gridSizeY, gridSizeZ);
         _cellN = _gridN + new int3(1, 1, 1);
         _cells = new float[_cellN.x * _cellN.y * _cellN.z];
-        
+
         var positionCenter = new Vector3(_cellN.x * 0.5f, _cellN.y * 0.5f, _cellN.z * 0.5f);
 
         if (UseNoise)
@@ -89,7 +110,7 @@ public class MarchingCubeTest : MonoBehaviour
                             _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = 0.0f;
                             continue;
                         }
-                        
+
                         var position = new Vector3(x, y, z);
                         position = (position - positionCenter) * noiseScale + noiseOffset;
                         var value = Perlin.Noise(position.x, position.y, position.z);
@@ -111,10 +132,11 @@ public class MarchingCubeTest : MonoBehaviour
                             _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = 0.0f;
                             continue;
                         }
-                        
+
                         var position = new Vector3(x - _cellN.x * 0.5f, y - _cellN.y * 0.5f, z - _cellN.z * 0.5f);
                         var distance = position.magnitude;
-                        _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] =  distance < sphereRadius ? 1.0f - distance / sphereRadius : 0.0f;
+                        _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] =
+                            distance < sphereRadius ? 1.0f - distance / sphereRadius : 0.0f;
                     }
                 }
             }
@@ -124,7 +146,7 @@ public class MarchingCubeTest : MonoBehaviour
             int3 min, max;
             min = (_cellN - (int)sphereRadius) / 2;
             max = (_cellN + (int)sphereRadius) / 2;
-            
+
             for (var z = 0; z < _cellN.z; z++)
             {
                 for (var y = 0; y < _cellN.y; y++)
@@ -136,8 +158,11 @@ public class MarchingCubeTest : MonoBehaviour
                             _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = 0.0f;
                             continue;
                         }
-                        
-                        _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = (x >= min.x && x < max.x && y >= min.y && y < max.y && z >= min.z && z < max.z) ? 1.0f : 0.0f;
+
+                        _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] =
+                            (x >= min.x && x < max.x && y >= min.y && y < max.y && z >= min.z && z < max.z)
+                                ? 1.0f
+                                : 0.0f;
                     }
                 }
             }
@@ -150,15 +175,15 @@ public class MarchingCubeTest : MonoBehaviour
         {
             Destroy(cube);
         }
-        
+
         var positionRoot = new Vector3(_cellN.x * -0.5f + 0.5f, 0f, _cellN.z * -0.5f + 0.5f);
-        
+
         for (var z = 0; z < _cellN.z; z++)
         {
             for (var y = 0; y < _cellN.y; y++)
             {
                 for (var x = 0; x < _cellN.x; x++)
-                { 
+                {
                     if (_cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] > isoLevel)
                     {
                         var go = Instantiate(cubePrefab, new Vector3(x, y, z) + positionRoot, Quaternion.identity);

@@ -29,7 +29,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: 0.1, y: 0.1, z: 0.1}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -47,11 +47,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   cubePrefab: {fileID: 3870361520681963794, guid: 16ac6e8f99105b743b925d2d66d3abf1, type: 3}
-  linePrefab: {fileID: 2854150057468670881, guid: 0af0faf17118eb34a8ee6ba3ed113493, type: 3}
+  drawCubes: 0
   isoLevel: 0.188
+  UseNoise: 1
   noiseOffset: {x: 1.06, y: 6.34, z: -0.58}
   noiseScale: 0.09
-  gridSize: {x: 10, y: 10, z: 10}
+  gridSize: {x: 100, y: 100, z: 100}
+  UseSphere: 0
+  sphereRadius: 2
   debugParam: 0
 --- !u!23 &2690712444111284266
 MeshRenderer:

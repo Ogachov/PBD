@@ -3,7 +3,7 @@ using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
 
-public class MC33
+public class MC33PrepareCS
 {
     // 大きすぎる頂点配列を受け入れられないレンダラー用にある程度のサイズに区切って保存するための定数
     private int _MC_N = 12; // 
