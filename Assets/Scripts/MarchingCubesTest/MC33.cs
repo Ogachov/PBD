@@ -75,8 +75,8 @@ public class MC33
     
     private float GetCellValue(int x, int y, int z)
     {
-        int nx = _MCn.x + 1;
-        int ny = _MCn.y + 1;
+        var nx = _MCn.x + 1;
+        var ny = _MCn.y + 1;
         return _F[x + y * nx + z * nx * ny];
     }
 
@@ -180,11 +180,11 @@ are no joined (case 13.5.1)
 */
 	private int interior_test(int i, int flagtplane, float[] v, int v1)
 	{
-		float At = v[v1 + 4] - v[v1 + 0];
-		float Bt = v[v1 + 5] - v[v1 + 1];
-		float Ct = v[v1 + 6] - v[v1 + 2];
-		float Dt = v[v1 + 7] - v[v1 + 3];
-		float t = At * Ct - Bt * Dt; //the "a" value.
+		var At = v[v1 + 4] - v[v1 + 0];
+		var Bt = v[v1 + 5] - v[v1 + 1];
+		var Ct = v[v1 + 6] - v[v1 + 2];
+		var Dt = v[v1 + 7] - v[v1 + 3];
+		var t = At * Ct - Bt * Dt; //the "a" value.
 
 		if ((i & 0x01) != 0) //false for i = 0 and 2, and true for i = 1 and 3
 		{
@@ -308,12 +308,12 @@ and used here.
 	private void find_case(int x, int y, int z, int i, float[] v, int v1)
 	{
 		// const unsigned short int *pcase;
-		MC33LookUpTable.Case pcase = MC33LookUpTable.Case.Case_0;
-		int caseIndex = 0;
+		var pcase = MC33LookUpTable.Case.Case_0;
+		var caseIndex = 0;
 
 		float t;
-		float3 r = new float3();
-		float3 n = new float3();
+		var r = new float3();
+		var n = new float3();
 		int k, m, c;
 		var f = new int[6];
 		int[] p = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
@@ -1073,9 +1073,9 @@ and used here.
     {
         _F = cells;
         int x, y, z;
-        int nx = _MCn.x;
-        int ny = _MCn.y;
-        int nz = _MCn.z;
+        var nx = _MCn.x;
+        var ny = _MCn.y;
+        var nz = _MCn.z;
         int i;
         
         var V = new float[12];
@@ -1152,7 +1152,6 @@ and used here.
             (_Oy, _Ny) = (_Ny, _Oy);
         }
         
-        // ダミー実装
         var mesh = new Mesh();
         if (_MC_S.T.Count > 0)
         {

@@ -864,11 +864,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: UseNoise
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: UseSphere
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
+      propertyPath: gridSize.y
+      value: 5
       objectReference: {fileID: 0}
     - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: sphereRadius

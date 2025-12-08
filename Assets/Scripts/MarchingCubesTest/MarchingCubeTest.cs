@@ -84,6 +84,12 @@ public class MarchingCubeTest : MonoBehaviour
                 {
                     for (var x = 0; x < _cellN.x; x++)
                     {
+                        if (x == 0 || x == _cellN.x - 1 || y == 0 || y == _cellN.y - 1 || z == 0 || z == _cellN.z - 1)
+                        {
+                            _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = 0.0f;
+                            continue;
+                        }
+                        
                         var position = new Vector3(x, y, z);
                         position = (position - positionCenter) * noiseScale + noiseOffset;
                         var value = Perlin.Noise(position.x, position.y, position.z);
@@ -100,9 +106,15 @@ public class MarchingCubeTest : MonoBehaviour
                 {
                     for (var x = 0; x < _cellN.x; x++)
                     {
+                        if (x == 0 || x == _cellN.x - 1 || y == 0 || y == _cellN.y - 1 || z == 0 || z == _cellN.z - 1)
+                        {
+                            _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = 0.0f;
+                            continue;
+                        }
+                        
                         var position = new Vector3(x - _cellN.x * 0.5f, y - _cellN.y * 0.5f, z - _cellN.z * 0.5f);
                         var distance = position.magnitude;
-                        _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] =  distance < sphereRadius ? 1.0f : 0.0f;
+                        _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] =  distance < sphereRadius ? 1.0f - distance / sphereRadius : 0.0f;
                     }
                 }
             }
@@ -119,6 +131,12 @@ public class MarchingCubeTest : MonoBehaviour
                 {
                     for (var x = 0; x < _cellN.x; x++)
                     {
+                        if (x == 0 || x == _cellN.x - 1 || y == 0 || y == _cellN.y - 1 || z == 0 || z == _cellN.z - 1)
+                        {
+                            _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = 0.0f;
+                            continue;
+                        }
+                        
                         _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = (x >= min.x && x < max.x && y >= min.y && y < max.y && z >= min.z && z < max.z) ? 1.0f : 0.0f;
                     }
                 }
