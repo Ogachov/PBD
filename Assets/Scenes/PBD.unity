@@ -1224,6 +1224,10 @@ PrefabInstance:
       propertyPath: sphereRadius
       value: 2
       objectReference: {fileID: 0}
+    - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
+      propertyPath: prepareComputeShader
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 8734656994774550690, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: m_Name
       value: MarchingCubeTest
