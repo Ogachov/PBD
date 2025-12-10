@@ -104,6 +104,63 @@ public class MC33PrepareCS
         }
 
         return face[0] + face[1] + face[2] + face[3] + face[4] + face[5];
+/*
+ // HLSLでの実装
+float is_equal(int val, int target)
+{
+    return step(abs(val - target), 0.1);
+}
+
+float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしておくのが無難です
+{
+    float fsw = (float)sw;
+    float result = 0.0;
+
+    // --- Vertex 0 (ind & 0x80) ---
+    
+    // face[0]
+    float k0 = step(v[0] * v[5], v[1] * v[4]);
+    float val0 = lerp(fsw, -fsw, k0);
+    // (ind & 0xCC) == 0x84 ? 1.0 : 0.0 の部分
+    result += val0 * is_equal(ind & 0xCC, 0x84);
+    // (ind & 0xCC) == 0x48 ? 1.0 : 0.0 の部分
+    result -= val0 * is_equal(ind & 0xCC, 0x48);
+
+    // face[3]
+    float k3 = step(v[0] * v[7], v[3] * v[4]);
+    float val3 = lerp(fsw, -fsw, k3);
+    result += val3 * is_equal(ind & 0x99, 0x81);
+    result -= val3 * is_equal(ind & 0x99, 0x18);
+
+    // face[4]
+    float k4 = step(v[0] * v[2], v[1] * v[3]);
+    float val4 = lerp(fsw, -fsw, k4);
+    result += val4 * is_equal(ind & 0xF0, 0xA0);
+    result -= val4 * is_equal(ind & 0xF0, 0x50);
+
+    // --- Vertex 6 (ind & 0x02) ---
+
+    // face[1]
+    float k1 = step(v[1] * v[6], v[2] * v[5]);
+    float val1 = lerp(fsw, -fsw, k1);
+    result += val1 * is_equal(ind & 0x66, 0x42);
+    result -= val1 * is_equal(ind & 0x66, 0x24);
+
+    // face[2]
+    float k2 = step(v[3] * v[6], v[2] * v[7]);
+    float val2 = lerp(fsw, -fsw, k2);
+    result += val2 * is_equal(ind & 0x33, 0x12);
+    result -= val2 * is_equal(ind & 0x33, 0x21);
+
+    // face[5]
+    float k5 = step(v[4] * v[6], v[5] * v[7]);
+    float val5 = lerp(fsw, -fsw, k5);
+    result += val5 * is_equal(ind & 0x0F, 0x0A);
+    result -= val5 * is_equal(ind & 0x0F, 0x05);
+
+    return result;
+}
+ */
     }
 
     /* Faster function for the face test */
