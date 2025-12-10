@@ -46,9 +46,7 @@ public class MC33
     private int[] _NL;
 
     private float[] _F;
-
-    private int _debugParam;
-
+	
     private void init_temp_isosurface(MC33Grid grd)
     {
         _MCn = grd.N;
@@ -589,6 +587,7 @@ and used here.
 			break;
 		}
 
+		var col = Color.white;
 		while (i != 0)
 		{
 			i = MC33LookUpTable.LookUp(pcase, caseIndex++);
@@ -597,7 +596,6 @@ and used here.
 				c = i & 0x0F;
 				if (p[c] < 0)
 				{
-					var col = c == _debugParam ? Color.red : Color.white;
 					switch (c)
 					{
 					case 0:
@@ -1167,10 +1165,8 @@ and used here.
         return mesh;
     }
     
-    public Mesh calculate_isosurface(MC33Grid grd, float iso, float[] cells, int debugParam)
+    public Mesh calculate_isosurface(MC33Grid grd, float iso, float[] cells)
     {
-	    _debugParam = debugParam;
-	    
         init_temp_isosurface(grd);
         return calc_isosurface(iso, cells);
     }

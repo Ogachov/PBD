@@ -15,15 +15,12 @@ public class MarchingCubeTest : MonoBehaviour
 
     [SerializeField] private bool UseSphere = false;
     [SerializeField] private float sphereRadius = 1.0f;
-
-    [SerializeField, Range(0, 12)] private int debugParam;
-
+    
     private float _lastIsoLevel = -1.0f;
     private Vector3 _lastNoiseOffset = Vector3.zero;
     private float _lastNoiseScale = 1.0f;
     private Vector3 _lastGridSize;
     private float _lastSphereRadius;
-    private int _lastDebugParam;
 
     private float[] _cells;
     private List<GameObject> _cubes = new List<GameObject>();
@@ -47,7 +44,7 @@ public class MarchingCubeTest : MonoBehaviour
     {
         if (!Mathf.Approximately(isoLevel, _lastIsoLevel) || noiseOffset != _lastNoiseOffset ||
             !Mathf.Approximately(noiseScale, _lastNoiseScale) || gridSize != _lastGridSize ||
-            debugParam != _lastDebugParam || !Mathf.Approximately(_lastSphereRadius, sphereRadius))
+            !Mathf.Approximately(_lastSphereRadius, sphereRadius))
         {
             MakeCells();
             if (drawCubes)
@@ -61,7 +58,6 @@ public class MarchingCubeTest : MonoBehaviour
         _lastNoiseScale = noiseScale;
         _lastGridSize = gridSize;
         _lastSphereRadius = sphereRadius;
-        _lastDebugParam = debugParam;
 
         var grid = new MC33Grid
         {
@@ -73,13 +69,13 @@ public class MarchingCubeTest : MonoBehaviour
 
         if (prepareComputeShader)
         {
-            var mesh = _mc33PrepareCS.calculate_isosurface(grid, isoLevel, _cells, debugParam);
+            var mesh = _mc33PrepareCS.calculate_isosurface(grid, isoLevel, _cells);
             mesh.name = "MC33_isosurface";
             _meshFilter.mesh = mesh;
         }
         else
         {
-            var mesh = _mc33.calculate_isosurface(grid, isoLevel, _cells, debugParam);
+            var mesh = _mc33.calculate_isosurface(grid, isoLevel, _cells);
             mesh.name = "MC33_isosurface";
             _meshFilter.mesh = mesh;
         }
