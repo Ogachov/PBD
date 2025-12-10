@@ -204,7 +204,7 @@ public class MC33PrepareCS
     */
     private void find_case(int x, int y, int z, int i, float[] v)
     {
-        var pcase = MC33LookUpTable.Case.Case_0;
+        MC33LookUpTable.Case pcase = MC33LookUpTable.Case.Case_1;
         var caseIndex = 0;
 
         float t;

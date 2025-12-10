@@ -308,7 +308,7 @@ and used here.
 	private void find_case(int x, int y, int z, int i, float[] v, int v1)
 	{
 		// const unsigned short int *pcase;
-		var pcase = MC33LookUpTable.Case.Case_0;
+		MC33LookUpTable.Case pcase = MC33LookUpTable.Case.Case_1;
 		var caseIndex = 0;
 
 		float t;
