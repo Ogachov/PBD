@@ -24,52 +24,80 @@ public class MC33PrepareCS
     private int3 _MCn;
 
     private float[] _F;
+    
+    private NativeArray<float3> _gradients;
+    private int _strideXY;  // フラット化した３次元配列のZ方向のストライド値
 
     private void init_temp_isosurface(MC33Grid grd)
     {
         _MCn = grd.N;
         _MC_O = grd.r0;
         _MC_D = grd.d;
-        // キャッシュ配列の初期化は削除
+        
+        _strideXY = (_MCn.x + 1) * (_MCn.y + 1);
     }
 
+    private int GridIndex(int x, int y, int z)
+    {
+        return x + y * (_MCn.x + 1) + z * _strideXY;
+    }
+    
     private float GetCellValue(int x, int y, int z)
     {
-        var nx = _MCn.x + 1;
-        var ny = _MCn.y + 1;
-        return _F[x + y * nx + z * nx * ny];
+        return _F[GridIndex(x, y, z)];
     }
+
+    private void PrecalcGradients(float[] cells)
+    {
+        var nx1 = _MCn.x + 1;
+        var ny1 = _MCn.y + 1;
+        var nz1 = _MCn.z + 1;
+
+        _gradients = new NativeArray<float3>(nx1 * ny1 * nz1, Allocator.Temp);
+
+        for (int z = 0; z < nz1; z++)
+        {
+            for (int y = 0; y < ny1; y++)
+            {
+                for (int x = 0; x < nx1; x++)
+                {
+                    float gx, gy, gz;
+
+                    // X
+                    if (x == 0)
+                        gx = cells[GridIndex(0, y, z)] - cells[GridIndex(1, y, z)];
+                    else if (x == _MCn.x)
+                        gx = cells[GridIndex(x - 1, y, z)] - cells[GridIndex(x, y, z)];
+                    else
+                        gx = 0.5f * (cells[GridIndex(x - 1, y, z)] - cells[GridIndex(x + 1, y, z)]);
+
+                    // Y
+                    if (y == 0)
+                        gy = cells[GridIndex(x, 0, z)] - cells[GridIndex(x, 1, z)];
+                    else if (y == _MCn.y)
+                        gy = cells[GridIndex(x, y - 1, z)] - cells[GridIndex(x, y, z)];
+                    else
+                        gy = 0.5f * (cells[GridIndex(x, y - 1, z)] - cells[GridIndex(x, y + 1, z)]);
+
+                    // Z
+                    if (z == 0)
+                        gz = cells[GridIndex(x, y, 0)] - cells[GridIndex(x, y, 1)];
+                    else if (z == _MCn.z)
+                        gz = cells[GridIndex(x, y, z - 1)] - cells[GridIndex(x, y, z)];
+                    else
+                        gz = 0.5f * (cells[GridIndex(x, y, z - 1)] - cells[GridIndex(x, y, z + 1)]);
+
+                    _gradients[GridIndex(x, y, z)] = new float3(gx, gy, gz);
+                }
+            }
+        }
+    }
+    
 
     // グリッド座標における勾配(法線)を中心差分で計算する
     private float3 GetGridGradient(int x, int y, int z)
     {
-        float3 n = float3.zero;
-
-        // X軸
-        if (x == 0)
-            n.x = GetCellValue(0, y, z) - GetCellValue(1, y, z);
-        else if (x == _MCn.x)
-            n.x = GetCellValue(x - 1, y, z) - GetCellValue(x, y, z);
-        else
-            n.x = 0.5f * (GetCellValue(x - 1, y, z) - GetCellValue(x + 1, y, z));
-
-        // Y軸
-        if (y == 0)
-            n.y = GetCellValue(x, 0, z) - GetCellValue(x, 1, z);
-        else if (y == _MCn.y)
-            n.y = GetCellValue(x, y - 1, z) - GetCellValue(x, y, z);
-        else
-            n.y = 0.5f * (GetCellValue(x, y - 1, z) - GetCellValue(x, y + 1, z));
-
-        // Z軸
-        if (z == 0)
-            n.z = GetCellValue(x, y, 0) - GetCellValue(x, y, 1);
-        else if (z == _MCn.z)
-            n.z = GetCellValue(x, y, z - 1) - GetCellValue(x, y, z);
-        else
-            n.z = 0.5f * (GetCellValue(x, y, z - 1) - GetCellValue(x, y, z + 1));
-
-        return n;
+        return _gradients[GridIndex(x, y, z)];
     }
 
     /*
@@ -261,7 +289,7 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
     */
     private void find_case(int x, int y, int z, int i, float[] v)
     {
-        MC33LookUpTable.Case pcase = MC33LookUpTable.Case.Case_1;
+        var pcase = MC33LookUpTable.Case.Case_1;
         var caseIndex = 0;
 
         float t;
@@ -848,6 +876,12 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
     public Mesh calculate_isosurface(MC33Grid grd, float iso, float[] cells)
     {
         init_temp_isosurface(grd);
-        return calc_isosurface(iso, cells);
+        PrecalcGradients(cells);
+        var mesh = calc_isosurface(iso, cells);
+        if (_gradients.IsCreated)
+        {
+            _gradients.Dispose();
+        }
+        return mesh;
     }
 }

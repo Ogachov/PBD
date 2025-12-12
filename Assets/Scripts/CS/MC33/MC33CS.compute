@@ -1,0 +1,101 @@
+#pragma kernel InitPoolList
+#pragma kernel InitParticles
+#pragma kernel SpawnParticles
+#pragma kernel UpdateParticles
+
+// RWStructuredBuffer<Particle> Particles;
+// AppendStructuredBuffer<uint> AliveList;
+//
+// AppendStructuredBuffer<uint> PoolAppend;
+// ConsumeStructuredBuffer<uint> PoolConsume;
+
+cbuffer Params
+{
+    uint _Capacity;
+    uint _FrameCount;
+    uint _SpawnCount;
+    float _DeltaTime;
+    float _Gravity;
+    float3 _BoundsCenter;
+    float3 _BoundsSize;
+    // 斥力が発生する半径
+    float _RepulsionRadius;
+    float _RepulsionStrength;
+}
+
+uint GetSeed(uint3 dispatchThreadID, uint _FrameCount)
+{
+    return (dispatchThreadID.x * 73856093u) ^ (dispatchThreadID.y * 19349663u) ^ (dispatchThreadID.z * 83492791u) ^ _FrameCount;
+}
+
+uint Hash(uint x)
+{
+    x ^= x >> 17;
+    x *= 0xED5AD4BBu;
+    x ^= x >> 11;
+    x *= 0xAC4C1B51u;
+    x ^= x >> 15;
+    x *= 0x31848BABu;
+    x ^= x >> 14;
+    return x;
+}
+
+// [0.0, 1.0)の範囲でランダムなfloat3を生成
+float3 RandomFloat3(uint seed)
+{
+    uint h1 = Hash(seed);
+    uint h2 = Hash(seed * 1664525u + 1013904223u);
+    uint h3 = Hash(seed * 22695477u + 1u);
+
+    return float3(
+        h1 / 4294967296.0,
+        h2 / 4294967296.0,
+        h3 / 4294967296.0
+    );
+}
+
+// [numthreads(128,1,1)]
+// void InitPoolList (uint3 id : SV_DispatchThreadID)
+// {
+//     uint i = id.x;
+//     if (i >= _Capacity) return;
+//
+//     PoolAppend.Append(i);
+// }
+
+// [numthreads(128,1,1)]
+// void InitParticles(uint3 id : SV_DispatchThreadID)
+// {
+//     uint i = id.x;
+//     if (i >= _Capacity) return;
+//     Particle p;
+//     p.position = float3(0,0,0);
+//     p.radiusScale = 1.0 + (float)i / (_Capacity * 10.0);    // ID順に[1.0, 1.1)の範囲でサイズを微妙に変える
+//     p.velocity = float3(0,0,0);
+//     p.life = 0.0;
+//     // p.color = half4(1,1,1,1);
+//     p.color = (float)i / (float)_Capacity; 
+//     Particles[i] = p;
+// }
+
+// [numthreads(128,1,1)]
+// void SpawnParticles (uint3 id : SV_DispatchThreadID)
+// {
+//     uint i = id.x;
+//     if (i >= _SpawnCount) return;
+//
+//     uint newIndex = PoolConsume.Consume();
+//  
+//     Particle p = Particles[newIndex];
+//     float3 pos = RandomFloat3(GetSeed(id, _FrameCount)) * 2.0f - 1.0f;
+//     p.position = float3(pos.x, 9.0f, pos.z);
+//     p.velocity = float3(0.0f, 0.0f, 0.0f);
+//     // p.color = half4(1.0, 1.0, 1.0, 1.0);
+//     p.life = 1.0f;
+//     Particles[newIndex] = p;
+// }
+
+[numthreads(128,1,1)]
+void UpdateParticles (uint3 id : SV_DispatchThreadID)
+{
+}

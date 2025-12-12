@@ -133,7 +133,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2337075258505543988, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 3515350922751407147, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
       propertyPath: m_LocalPosition.x
@@ -1231,6 +1231,10 @@ PrefabInstance:
     - target: {fileID: 8734656994774550690, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: m_Name
       value: MarchingCubeTest
+      objectReference: {fileID: 0}
+    - target: {fileID: 8734656994774550690, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
+      propertyPath: m_IsActive
+      value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
