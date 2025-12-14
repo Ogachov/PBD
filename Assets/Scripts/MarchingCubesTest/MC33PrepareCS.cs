@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Mathematics;
@@ -7,24 +8,76 @@ public class MC33PrepareCS
 {
     private int _MC_DVE = 1 << 12; // 分割する単位
 
-    private struct surface
+    // ============================================================
+    // ComputeShader移植しやすい「テーブル化」セクション
+    // ============================================================
+
+    // 8コーナーのローカルオフセット（x,y,z は 0/1）
+    // Vertex order は既存コードの V[0..7] と一致させる
+    //   0:(0,0,0) 1:(0,1,0) 2:(0,1,1) 3:(0,0,1)
+    //   4:(1,0,0) 5:(1,1,0) 6:(1,1,1) 7:(1,0,1)
+    private static readonly int3[] s_cornerOffset =
     {
-        public int flag;
-        public int nV;
-        public List<int> T;
+        new int3(0,0,0), new int3(0,1,0), new int3(0,1,1), new int3(0,0,1),
+        new int3(1,0,0), new int3(1,1,0), new int3(1,1,1), new int3(1,0,1),
+    };
+
+    // 12エッジが結ぶコーナー対（EdgeId -> (cornerA, cornerB)）
+    // EdgeId の並びは既存 find_case の case 0..11 と対応させる
+    private static readonly int2[] s_edgeCorners =
+    {
+        new int2(0,1),  // 0: 0-1 (Y)
+        new int2(1,2),  // 1: 1-2 (Z)
+        new int2(3,2),  // 2: 3-2 (Y)
+        new int2(0,3),  // 3: 0-3 (Z)
+        new int2(4,5),  // 4: 4-5 (Y)
+        new int2(5,6),  // 5: 5-6 (Z)
+        new int2(7,6),  // 6: 7-6 (Y)
+        new int2(4,7),  // 7: 4-7 (Z)
+        new int2(0,4),  // 8: 0-4 (X)
+        new int2(1,5),  // 9: 1-5 (X)
+        new int2(2,6),  //10: 2-6 (X)
+        new int2(3,7),  //11: 3-7 (X)
+    };
+
+    // ============================================================
+    // 出力先を抽象化：CPUではNativeList、GPUではAppendBuffer相当
+    // ============================================================
+    private interface ISurfaceWriter
+    {
+        int AddVertex(float3 pos, float3 normal, Color color);
+        void AddTriangle(int a, int b, int c);
+    }
+
+    private struct CpuSurfaceWriter : ISurfaceWriter
+    {
         public NativeList<float3> V;
         public NativeList<float3> N;
         public NativeList<Color> C;
-    }
+        public List<int> T;
 
-    private surface _MC_S;
+        public int AddVertex(float3 pos, float3 normal, Color color)
+        {
+            V.Add(pos);
+            N.Add(normal);
+            C.Add(color);
+            return V.Length - 1;
+        }
+
+        public void AddTriangle(int a, int b, int c)
+        {
+            T.Add(a);
+            T.Add(b);
+            T.Add(c);
+        }
+    }
 
     private float3 _MC_O;
     private float3 _MC_D;
     private int3 _MCn;
 
     private float[] _F;
-    
+
     private NativeArray<float3> _gradients;
     private int _strideXY;  // フラット化した３次元配列のZ方向のストライド値
 
@@ -33,7 +86,7 @@ public class MC33PrepareCS
         _MCn = grd.N;
         _MC_O = grd.r0;
         _MC_D = grd.d;
-        
+
         _strideXY = (_MCn.x + 1) * (_MCn.y + 1);
     }
 
@@ -41,7 +94,7 @@ public class MC33PrepareCS
     {
         return x + y * (_MCn.x + 1) + z * _strideXY;
     }
-    
+
     private float GetCellValue(int x, int y, int z)
     {
         return _F[GridIndex(x, y, z)];
@@ -63,49 +116,108 @@ public class MC33PrepareCS
                 {
                     float gx, gy, gz;
 
-                    // X
-                    if (x == 0)
-                        gx = cells[GridIndex(0, y, z)] - cells[GridIndex(1, y, z)];
-                    else if (x == _MCn.x)
-                        gx = cells[GridIndex(x - 1, y, z)] - cells[GridIndex(x, y, z)];
-                    else
-                        gx = 0.5f * (cells[GridIndex(x - 1, y, z)] - cells[GridIndex(x + 1, y, z)]);
+                    if (x == 0) gx = cells[GridIndex(0, y, z)] - cells[GridIndex(1, y, z)];
+                    else if (x == _MCn.x) gx = cells[GridIndex(x - 1, y, z)] - cells[GridIndex(x, y, z)];
+                    else gx = 0.5f * (cells[GridIndex(x - 1, y, z)] - cells[GridIndex(x + 1, y, z)]);
 
-                    // Y
-                    if (y == 0)
-                        gy = cells[GridIndex(x, 0, z)] - cells[GridIndex(x, 1, z)];
-                    else if (y == _MCn.y)
-                        gy = cells[GridIndex(x, y - 1, z)] - cells[GridIndex(x, y, z)];
-                    else
-                        gy = 0.5f * (cells[GridIndex(x, y - 1, z)] - cells[GridIndex(x, y + 1, z)]);
+                    if (y == 0) gy = cells[GridIndex(x, 0, z)] - cells[GridIndex(x, 1, z)];
+                    else if (y == _MCn.y) gy = cells[GridIndex(x, y - 1, z)] - cells[GridIndex(x, y, z)];
+                    else gy = 0.5f * (cells[GridIndex(x, y - 1, z)] - cells[GridIndex(x, y + 1, z)]);
 
-                    // Z
-                    if (z == 0)
-                        gz = cells[GridIndex(x, y, 0)] - cells[GridIndex(x, y, 1)];
-                    else if (z == _MCn.z)
-                        gz = cells[GridIndex(x, y, z - 1)] - cells[GridIndex(x, y, z)];
-                    else
-                        gz = 0.5f * (cells[GridIndex(x, y, z - 1)] - cells[GridIndex(x, y, z + 1)]);
+                    if (z == 0) gz = cells[GridIndex(x, y, 0)] - cells[GridIndex(x, y, 1)];
+                    else if (z == _MCn.z) gz = cells[GridIndex(x, y, z - 1)] - cells[GridIndex(x, y, z)];
+                    else gz = 0.5f * (cells[GridIndex(x, y, z - 1)] - cells[GridIndex(x, y, z + 1)]);
 
                     _gradients[GridIndex(x, y, z)] = new float3(gx, gy, gz);
                 }
             }
         }
     }
-    
 
-    // グリッド座標における勾配(法線)を中心差分で計算する
     private float3 GetGridGradient(int x, int y, int z)
     {
         return _gradients[GridIndex(x, y, z)];
     }
 
-    /*
-    This function return a vector with all six test face results (face[6]).
-    */
-    private int face_tests(int[] face, int ind, int sw, float[] v)
+    // ============================================================
+    // Compute移植に向けた「共通補間」ユーティリティ
+    // ============================================================
+    private float3 GridToWorld(float3 gridPos)
     {
-        if ((ind & 0x80) != 0) //vertex 0
+        return gridPos * _MC_D + _MC_O;
+    }
+
+    private float3 Normalized(float3 n)
+    {
+#if MC_Normal_neg
+        return -math.normalize(n);
+#else
+        return math.normalize(n);
+#endif
+    }
+
+    private int WriteGridVertex(ISurfaceWriter writer, int gx, int gy, int gz, Color col)
+    {
+        var p = new float3(gx, gy, gz);
+        var n = GetGridGradient(gx, gy, gz);
+        return writer.AddVertex(GridToWorld(p), Normalized(n), col);
+    }
+
+    private int WriteEdgeVertex(
+        ISurfaceWriter writer,
+        int cellX, int cellY, int cellZ,
+        int edgeId,
+        float isoMinusValuesV0toV7, // ダミー（署名固定用。Compute移植時に整理する）
+        float[] v, // v[0..7] をそのまま受ける（GPU側も float v[8] になる想定）
+        Color col)
+    {
+        // Edge -> cornerA/cornerB
+        int2 cc = s_edgeCorners[edgeId];
+        int ca = cc.x;
+        int cb = cc.y;
+
+        float va = v[ca];
+        float vb = v[cb];
+
+        // 端点がちょうど0ならそのグリッド点を返す（既存挙動維持）
+        int3 oa = s_cornerOffset[ca];
+        int3 ob = s_cornerOffset[cb];
+
+        int ax = cellX + oa.x;
+        int ay = cellY + oa.y;
+        int az = cellZ + oa.z;
+
+        int bx = cellX + ob.x;
+        int by = cellY + ob.y;
+        int bz = cellZ + ob.z;
+
+        if (va == 0.0f) return WriteGridVertex(writer, ax, ay, az, col);
+        if (vb == 0.0f) return WriteGridVertex(writer, bx, by, bz, col);
+
+        // 線形補間 t
+        float t = va / (va - vb);
+
+        // 位置補間（グリッド空間）
+        float3 pa = new float3(ax, ay, az);
+        float3 pb = new float3(bx, by, bz);
+        float3 p = math.lerp(pa, pb, t);
+
+        // 法線（勾配）も線形補間
+        float3 ga = GetGridGradient(ax, ay, az);
+        float3 gb = GetGridGradient(bx, by, bz);
+        float3 n = math.lerp(ga, gb, t);
+
+        return writer.AddVertex(GridToWorld(p), Normalized(n), col);
+    }
+
+    // ============================================================
+    // 既存ロジック：face_tests / face_test1 / interior_test は大枠維持
+    // （Compute移植時もそのまま関数として持っていける）
+    // ============================================================
+    private int face_tests(Span<int> face, int ind, int sw, float[] v)
+    {
+        // ※元コードの配列 face[6] を Span<int> に変更（new削除）
+        if ((ind & 0x80) != 0)
         {
             face[0] = ((ind & 0xCC) == 0x84 ? (v[0] * v[5] < v[1] * v[4] ? -sw : sw) : 0);
             face[3] = ((ind & 0x99) == 0x81 ? (v[0] * v[7] < v[3] * v[4] ? -sw : sw) : 0);
@@ -118,7 +230,7 @@ public class MC33PrepareCS
             face[4] = ((ind & 0xF0) == 0x50 ? (v[0] * v[2] < v[1] * v[3] ? sw : -sw) : 0);
         }
 
-        if ((ind & 0x02) != 0) //vertex 6
+        if ((ind & 0x02) != 0)
         {
             face[1] = ((ind & 0x66) == 0x42 ? (v[1] * v[6] < v[2] * v[5] ? -sw : sw) : 0);
             face[2] = ((ind & 0x33) == 0x12 ? (v[3] * v[6] < v[2] * v[7] ? -sw : sw) : 0);
@@ -132,66 +244,8 @@ public class MC33PrepareCS
         }
 
         return face[0] + face[1] + face[2] + face[3] + face[4] + face[5];
-/*
- // HLSLでの実装
-float is_equal(int val, int target)
-{
-    return step(abs(val - target), 0.1);
-}
-
-float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしておくのが無難です
-{
-    float fsw = (float)sw;
-    float result = 0.0;
-
-    // --- Vertex 0 (ind & 0x80) ---
-    
-    // face[0]
-    float k0 = step(v[0] * v[5], v[1] * v[4]);
-    float val0 = lerp(fsw, -fsw, k0);
-    // (ind & 0xCC) == 0x84 ? 1.0 : 0.0 の部分
-    result += val0 * is_equal(ind & 0xCC, 0x84);
-    // (ind & 0xCC) == 0x48 ? 1.0 : 0.0 の部分
-    result -= val0 * is_equal(ind & 0xCC, 0x48);
-
-    // face[3]
-    float k3 = step(v[0] * v[7], v[3] * v[4]);
-    float val3 = lerp(fsw, -fsw, k3);
-    result += val3 * is_equal(ind & 0x99, 0x81);
-    result -= val3 * is_equal(ind & 0x99, 0x18);
-
-    // face[4]
-    float k4 = step(v[0] * v[2], v[1] * v[3]);
-    float val4 = lerp(fsw, -fsw, k4);
-    result += val4 * is_equal(ind & 0xF0, 0xA0);
-    result -= val4 * is_equal(ind & 0xF0, 0x50);
-
-    // --- Vertex 6 (ind & 0x02) ---
-
-    // face[1]
-    float k1 = step(v[1] * v[6], v[2] * v[5]);
-    float val1 = lerp(fsw, -fsw, k1);
-    result += val1 * is_equal(ind & 0x66, 0x42);
-    result -= val1 * is_equal(ind & 0x66, 0x24);
-
-    // face[2]
-    float k2 = step(v[3] * v[6], v[2] * v[7]);
-    float val2 = lerp(fsw, -fsw, k2);
-    result += val2 * is_equal(ind & 0x33, 0x12);
-    result -= val2 * is_equal(ind & 0x33, 0x21);
-
-    // face[5]
-    float k5 = step(v[4] * v[6], v[5] * v[7]);
-    float val5 = lerp(fsw, -fsw, k5);
-    result += val5 * is_equal(ind & 0x0F, 0x0A);
-    result -= val5 * is_equal(ind & 0x0F, 0x05);
-
-    return result;
-}
- */
     }
 
-    /* Faster function for the face test */
     private int face_test1(int face, float[] v)
     {
         switch (face)
@@ -203,20 +257,18 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
             case 4: return (v[0] * v[2] < v[1] * v[3] ? 0x50 : 0xA0);
             case 5: return (v[4] * v[6] < v[5] * v[7] ? 0x05 : 0x0A);
         }
-
         return 0;
     }
 
-    /* Interior test function. */
     private int interior_test(int i, int flagtplane, float[] v)
     {
         var At = v[4] - v[0];
         var Bt = v[5] - v[1];
         var Ct = v[6] - v[2];
         var Dt = v[7] - v[3];
-        var t = At * Ct - Bt * Dt; //the "a" value.
+        var t = At * Ct - Bt * Dt;
 
-        if ((i & 0x01) != 0) //false for i = 0 and 2, and true for i = 1 and 3
+        if ((i & 0x01) != 0)
         {
             if (t <= 0.0f) return 0;
         }
@@ -225,83 +277,50 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
             if (t >= 0.0f) return 0;
         }
 
-        t = 0.5f * (v[3] * Bt + v[1] * Dt - v[2] * At - v[0] * Ct) / t; //t = -b/2a
-        if (t <= 0.0f || t >= 1.0f)
-            return 0;
+        t = 0.5f * (v[3] * Bt + v[1] * Dt - v[2] * At - v[0] * Ct) / t;
+        if (t <= 0.0f || t >= 1.0f) return 0;
 
         At = v[0] + At * t;
         Bt = v[1] + Bt * t;
         Ct = v[2] + Ct * t;
         Dt = v[3] + Dt * t;
 
+        // Mathf 依存を減らす：符号比較は math.sign を使用
+        float sBt = math.sign(Bt);
+        float sDt = math.sign(Dt);
+        float sAt = math.sign(At);
+        float sCt = math.sign(Ct);
+        float sVi = math.sign(v[i]);
+
         if ((i & 0x01) != 0)
         {
-            if (At * Ct < Bt * Dt && Mathf.Approximately(Mathf.Sign(Bt), Mathf.Sign(Dt)))
-                return (Mathf.Approximately(Mathf.Sign(Bt), Mathf.Sign(v[i]))) ? 1 : 0 + flagtplane;
+            if (At * Ct < Bt * Dt && sBt == sDt)
+                return (sBt == sVi) ? 1 : 0 + flagtplane;
         }
         else
         {
-            if (At * Ct > Bt * Dt && Mathf.Approximately(Mathf.Sign(At), Mathf.Sign(Ct)))
-                return (Mathf.Approximately(Mathf.Sign(At), Mathf.Sign(v[i]))) ? 1 : 0 + flagtplane;
+            if (At * Ct > Bt * Dt && sAt == sCt)
+                return (sAt == sVi) ? 1 : 0 + flagtplane;
         }
 
         return 0;
     }
 
-    private int store_point_normal(float3 r, float3 n, Color c)
-    {
-        // 法線nを正規化する
-#if MC_Normal_neg
-		n = -math.normalize(n);
-#else
-        n = math.normalize(n);
-#endif
-
-        _MC_S.V.Add(r * _MC_D + _MC_O);
-        _MC_S.N.Add(n);
-        _MC_S.C.Add(c);
-        _MC_S.nV++;
-        return (_MC_S.nV - 1);
-    }
-
-    private void store_triangle(int3 t)
-    {
-        _MC_S.T.Add(t.x);
-        _MC_S.T.Add(t.y);
-        _MC_S.T.Add(t.z);
-    }
-
-    // グリッド点上の頂点を登録する
-    private int surfint(int x, int y, int z, float3 r, float3 n)
-    {
-        r.x = x;
-        r.y = y;
-        r.z = z;
-        // 共通メソッドを使って勾配計算
-        n = GetGridGradient(x, y, z);
-        return store_point_normal(r, n, Color.green);
-    }
-
-    /******************************************************************
-    This function find the MC33 case...
-    キャッシュ依存を削除し、すべての頂点を独立計算するバージョン。
-    法線はGetGridGradientを用いた補間で求める。
-    */
-    private void find_case(int x, int y, int z, int i, float[] v)
+    // ============================================================
+    // find_case：頂点生成部を「Edge補間関数」に寄せ、配列newを排除
+    // ============================================================
+    private void find_case(ISurfaceWriter writer, int x, int y, int z, int i, float[] v)
     {
         var pcase = MC33LookUpTable.Case.Case_1;
         var caseIndex = 0;
 
-        float t;
-        var r = new float3();
-        var n = new float3();
-        int k, m, c;
-        var f = new int[6];
-        int[] p = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
-
+        int m, c;
         m = i & 0x80;
         c = MC33LookUpTable.Case_Index[(m != 0) ? (i ^ 0xff) : i];
-        switch (c >> 8) //find the MC33 case
+
+        Span<int> face = stackalloc int[6];
+
+        switch (c >> 8)
         {
             case 1:
                 if ((c & 0x0080) != 0) m ^= 0x80;
@@ -367,21 +386,21 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
                 break;
             case 7:
                 if ((c & 0x0080) != 0) m ^= 0x80;
-                switch (face_tests(f, i, (m != 0 ? 1 : -1), v))
+                switch (face_tests(face, i, (m != 0 ? 1 : -1), v))
                 {
                     case -3:
                         pcase = MC33LookUpTable.Case.Case_7_1;
                         caseIndex = 3 * (c & 0x7F);
                         break;
                     case -1:
-                        if (f[4] + f[5] == 1)
+                        if (face[4] + face[5] == 1)
                         {
                             pcase = MC33LookUpTable.Case.Case_7_2_1;
                             caseIndex = 5 * (c & 0x7F);
                         }
                         else
                         {
-                            pcase = (f[(33825 >> ((c & 0x7F) << 1)) & 3] == 1
+                            pcase = (face[(33825 >> ((c & 0x7F) << 1)) & 3] == 1
                                 ? MC33LookUpTable.Case.Case_7_2_3
                                 : MC33LookUpTable.Case.Case_7_2_2);
                             caseIndex = 5 * (c & 0x7F);
@@ -389,14 +408,14 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
 
                         break;
                     case 1:
-                        if (f[4] + f[5] == -1)
+                        if (face[4] + face[5] == -1)
                         {
                             pcase = MC33LookUpTable.Case.Case_7_3_3;
                             caseIndex = 9 * (c & 0x7F);
                         }
                         else
                         {
-                            pcase = (f[(33825 >> ((c & 0x7F) << 1)) & 3] == 1
+                            pcase = (face[(33825 >> ((c & 0x7F) << 1)) & 3] == 1
                                 ? MC33LookUpTable.Case.Case_7_3_2
                                 : MC33LookUpTable.Case.Case_7_3_1);
                             caseIndex = 9 * (c & 0x7F);
@@ -428,7 +447,7 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
                 caseIndex = (c & 0x7F);
                 break;
             case 10:
-                switch (face_tests(f, i, (m != 0 ? 1 : -1), v))
+                switch (face_tests(face, i, (m != 0 ? 1 : -1), v))
                 {
                     case -2:
                     {
@@ -463,7 +482,7 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
                     }
                         break;
                     case 0:
-                        pcase = (f[4 >> ((c & 0x7F) << 1)] == 1
+                        pcase = (face[4 >> ((c & 0x7F) << 1)] == 1
                             ? MC33LookUpTable.Case.Case_10_2_2
                             : MC33LookUpTable.Case.Case_10_2_1);
                         caseIndex = 8 * (c & 0x7F);
@@ -476,7 +495,7 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
                 caseIndex = (c & 0x7F);
                 break;
             case 12:
-                switch (face_tests(f, i, (m != 0 ? 1 : -1), v))
+                switch (face_tests(face, i, (m != 0 ? 1 : -1), v))
                 {
                     case -2:
                         if (interior_test((int)MC33LookUpTable._12_test_index[0, (int)(c & 0x7F)], 0, v) != 0)
@@ -505,7 +524,7 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
 
                         break;
                     case 0:
-                        pcase = (f[(int)MC33LookUpTable._12_test_index[2, (int)(c & 0x7F)]] == 1
+                        pcase = (face[(int)MC33LookUpTable._12_test_index[2, (int)(c & 0x7F)]] == 1
                             ? MC33LookUpTable.Case.Case_12_2_2
                             : MC33LookUpTable.Case.Case_12_2_1);
                         caseIndex = 8 * (c & 0x7F);
@@ -514,288 +533,153 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
 
                 break;
             case 13:
-                c = face_tests(f, i, (m != 0 ? 1 : -1), v);
-                switch (Mathf.Abs(c))
+            {
+                // Case 13 は face_tests の結果（-6..6）をさらに分類して pcase/caseIndex を決定する
+                int ct = face_tests(face, i, (m != 0 ? 1 : -1), v);
+
+                switch (math.abs(ct))
                 {
                     case 6:
+                        // 13.1
                         pcase = MC33LookUpTable.Case.Case_13_1;
-                        caseIndex = 4 * ((c > 0) ? 1 : 0);
+                        caseIndex = 4 * ((ct > 0) ? 1 : 0);
                         break;
+
                     case 4:
-                        c >>= 2;
-                        i = 0;
-                        while (f[i] != -c)
-                            ++i;
+                    {
+                        // 13.2
+                        // 元コード: c >>= 2; i=0; while(f[i]!=-c)++i; caseIndex = 6*(3*c+3+i); i=1;
+                        int cc = ct >> 2; // -1 or +1
+                        int which = 0;
+                        while (which < 6 && face[which] != -cc) ++which;
+
                         pcase = MC33LookUpTable.Case.Case_13_2;
-                        caseIndex = 6 * (3 * c + 3 + i);
+                        caseIndex = 6 * (3 * cc + 3 + which);
+
+                        // 元実装と同じく、この分岐では以降の while(i!=0) を確実に回すため i を 1 にする
                         i = 1;
                         break;
+                    }
+
                     case 2:
-                        c = (((((((((f[0] < 0) ? 1 : 0) << 1) | ((f[1] < 0) ? 1 : 0)) << 1) |
-                                ((f[2] < 0) ? 1 : 0)) << 1) |
-                              ((f[3] < 0) ? 1 : 0)) << 1) | ((f[4] < 0) ? 1 : 0);
+                    {
+                        // 13.3
+                        // face[0..4] の符号を 5bit に詰める（元コードの手順をそのまま）
+                        int bits =
+                            (((((face[0] < 0) ? 1 : 0) << 1) | ((face[1] < 0) ? 1 : 0)) << 1 |
+                             ((face[2] < 0) ? 1 : 0)) << 1 |
+                            ((face[3] < 0) ? 1 : 0);
+
+                        bits = (bits << 1) | ((face[4] < 0) ? 1 : 0);
+
                         pcase = MC33LookUpTable.Case.Case_13_3;
-                        caseIndex = 10 * (25 - c + (((c > 10 ? 1 : 0) + (c > 20 ? 1 : 0)) << 1));
+                        caseIndex = 10 * (25 - bits + ((((bits > 10) ? 1 : 0) + ((bits > 20) ? 1 : 0)) << 1));
                         break;
+                    }
+
                     case 0:
-                        c = (((f[1] < 0) ? 1 : 0) << 1) | ((f[5] < 0) ? 1 : 0);
-                        if (f[0] * f[1] * f[5] == 1)
+                    {
+                        // 13.4 or 13.5 (1/2)
+                        // 元コード: c = (((f[1]<0)?1:0)<<1) | ((f[5]<0)?1:0);
+                        //           if(f0*f1*f5==1) -> 13.4 else interior_test(c,1,v) で 13.5 を分岐
+                        int cc = (((face[1] < 0) ? 1 : 0) << 1) | ((face[5] < 0) ? 1 : 0);
+
+                        // face 値は -1/0/+1 なので積が 1 なら全て同符号（かつ 0 なし）
+                        if (face[0] * face[1] * face[5] == 1)
                         {
                             pcase = MC33LookUpTable.Case.Case_13_4;
-                            caseIndex = 12 * c;
+                            caseIndex = 12 * cc;
                         }
                         else
                         {
-                            i = interior_test(c, 1, v);
-                            if (i != 0)
+                            int it = interior_test(cc, 1, v);
+                            if (it != 0)
                             {
+                                // 13.5.2
                                 pcase = MC33LookUpTable.Case.Case_13_5_2;
-                                caseIndex = 10 * (c | ((i & 1) << 2));
+                                caseIndex = 10 * (cc | ((it & 1) << 2));
                             }
                             else
                             {
+                                // 13.5.1
                                 pcase = MC33LookUpTable.Case.Case_13_5_1;
-                                caseIndex = 6 * c;
+                                caseIndex = 6 * cc;
+
+                                // 元実装と同じく、以降の while(i!=0) を回すため i=1 を立てる
                                 i = 1;
                             }
                         }
 
                         break;
+                    }
                 }
-
                 break;
+            }
             case 14:
                 pcase = MC33LookUpTable.Case.Case_14;
                 caseIndex = (c & 0x7F);
                 break;
         }
 
-        var col = Color.white;
+        Color col = Color.white;
+
+        // p[0..12] を new せず stackalloc
+        Span<int> p = stackalloc int[13];
+        for (int pi = 0; pi < p.Length; pi++) p[pi] = -1;
+
         while (i != 0)
         {
             i = MC33LookUpTable.LookUp(pcase, caseIndex++);
-            for (k = 0; k < 3; k++)
+            int f0 = 0, f1 = 0, f2 = 0;
+
+            for (int k = 0; k < 3; k++)
             {
-                c = i & 0x0F;
-                if (p[c] < 0)
+                int edgeId = i & 0x0F;
+
+                if (p[edgeId] < 0)
                 {
-                    float3 g0, g1;
-                    switch (c)
+                    if (edgeId == 12)
                     {
-                        case 0: // Edge 0-1 (Y axis)
-                            if (v[0] == 0.0f) p[0] = surfint(x, y, z, r, n);
-                            else if (v[1] == 0.0f) p[0] = surfint(x, y + 1, z, r, n);
-                            else
-                            {
-                                t = v[0] / (v[0] - v[1]);
-                                r.x = x;
-                                r.z = z;
-                                r.y = y + t;
-                                g0 = GetGridGradient(x, y, z);
-                                g1 = GetGridGradient(x, y + 1, z);
-                                n = math.lerp(g0, g1, t);
-                                p[0] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 1: // Edge 1-2 (Z axis)
-                            if (v[1] == 0.0f) p[1] = surfint(x, y + 1, z, r, n);
-                            else if (v[2] == 0.0f) p[1] = surfint(x, y + 1, z + 1, r, n);
-                            else
-                            {
-                                t = v[1] / (v[1] - v[2]);
-                                r.x = x;
-                                r.y = y + 1;
-                                r.z = z + t;
-                                g0 = GetGridGradient(x, y + 1, z);
-                                g1 = GetGridGradient(x, y + 1, z + 1);
-                                n = math.lerp(g0, g1, t);
-                                p[1] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 2: // Edge 3-2 (Y axis) from (0,0,1) to (0,1,1) -> v[3] to v[2]
-                            if (v[3] == 0.0f) p[2] = surfint(x, y, z + 1, r, n);
-                            else if (v[2] == 0.0f) p[2] = surfint(x, y + 1, z + 1, r, n);
-                            else
-                            {
-                                t = v[3] / (v[3] - v[2]);
-                                r.x = x;
-                                r.z = z + 1;
-                                r.y = y + t;
-                                g0 = GetGridGradient(x, y, z + 1);
-                                g1 = GetGridGradient(x, y + 1, z + 1);
-                                n = math.lerp(g0, g1, t);
-                                p[2] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 3: // Edge 0-3 (Z axis)
-                            if (v[0] == 0.0f) p[3] = surfint(x, y, z, r, n);
-                            else if (v[3] == 0.0f) p[3] = surfint(x, y, z + 1, r, n);
-                            else
-                            {
-                                t = v[0] / (v[0] - v[3]);
-                                r.x = x;
-                                r.y = y;
-                                r.z = z + t;
-                                g0 = GetGridGradient(x, y, z);
-                                g1 = GetGridGradient(x, y, z + 1);
-                                n = math.lerp(g0, g1, t);
-                                p[3] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 4: // Edge 4-5 (Y axis)
-                            if (v[4] == 0.0f) p[4] = surfint(x + 1, y, z, r, n);
-                            else if (v[5] == 0.0f) p[4] = surfint(x + 1, y + 1, z, r, n);
-                            else
-                            {
-                                t = v[4] / (v[4] - v[5]);
-                                r.x = x + 1;
-                                r.z = z;
-                                r.y = y + t;
-                                g0 = GetGridGradient(x + 1, y, z);
-                                g1 = GetGridGradient(x + 1, y + 1, z);
-                                n = math.lerp(g0, g1, t);
-                                p[4] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 5: // Edge 5-6 (Z axis)
-                            if (v[5] == 0.0f) p[5] = surfint(x + 1, y + 1, z, r, n);
-                            else if (v[6] == 0.0f) p[5] = surfint(x + 1, y + 1, z + 1, r, n);
-                            else
-                            {
-                                t = v[5] / (v[5] - v[6]);
-                                r.x = x + 1;
-                                r.y = y + 1;
-                                r.z = z + t;
-                                g0 = GetGridGradient(x + 1, y + 1, z);
-                                g1 = GetGridGradient(x + 1, y + 1, z + 1);
-                                n = math.lerp(g0, g1, t);
-                                p[5] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 6: // Edge 7-6 (Y axis)
-                            if (v[7] == 0.0f) p[6] = surfint(x + 1, y, z + 1, r, n);
-                            else if (v[6] == 0.0f) p[6] = surfint(x + 1, y + 1, z + 1, r, n);
-                            else
-                            {
-                                t = v[7] / (v[7] - v[6]);
-                                r.x = x + 1;
-                                r.z = z + 1;
-                                r.y = y + t;
-                                g0 = GetGridGradient(x + 1, y, z + 1);
-                                g1 = GetGridGradient(x + 1, y + 1, z + 1);
-                                n = math.lerp(g0, g1, t);
-                                p[6] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 7: // Edge 4-7 (Z axis)
-                            if (v[4] == 0.0f) p[7] = surfint(x + 1, y, z, r, n);
-                            else if (v[7] == 0.0f) p[7] = surfint(x + 1, y, z + 1, r, n);
-                            else
-                            {
-                                t = v[4] / (v[4] - v[7]);
-                                r.x = x + 1;
-                                r.y = y;
-                                r.z = z + t;
-                                g0 = GetGridGradient(x + 1, y, z);
-                                g1 = GetGridGradient(x + 1, y, z + 1);
-                                n = math.lerp(g0, g1, t);
-                                p[7] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 8: // Edge 0-4 (X axis)
-                            if (v[0] == 0.0f) p[8] = surfint(x, y, z, r, n);
-                            else if (v[4] == 0.0f) p[8] = surfint(x + 1, y, z, r, n);
-                            else
-                            {
-                                t = v[0] / (v[0] - v[4]);
-                                r.y = y;
-                                r.z = z;
-                                r.x = x + t;
-                                g0 = GetGridGradient(x, y, z);
-                                g1 = GetGridGradient(x + 1, y, z);
-                                n = math.lerp(g0, g1, t);
-                                p[8] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 9: // Edge 1-5 (X axis)
-                            if (v[1] == 0.0f) p[9] = surfint(x, y + 1, z, r, n);
-                            else if (v[5] == 0.0f) p[9] = surfint(x + 1, y + 1, z, r, n);
-                            else
-                            {
-                                t = v[1] / (v[1] - v[5]);
-                                r.y = y + 1;
-                                r.z = z;
-                                r.x = x + t;
-                                g0 = GetGridGradient(x, y + 1, z);
-                                g1 = GetGridGradient(x + 1, y + 1, z);
-                                n = math.lerp(g0, g1, t);
-                                p[9] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 10: // Edge 2-6 (X axis)
-                            if (v[2] == 0.0f) p[10] = surfint(x, y + 1, z + 1, r, n);
-                            else if (v[6] == 0.0f) p[10] = surfint(x + 1, y + 1, z + 1, r, n);
-                            else
-                            {
-                                t = v[2] / (v[2] - v[6]);
-                                r.y = y + 1;
-                                r.z = z + 1;
-                                r.x = x + t;
-                                g0 = GetGridGradient(x, y + 1, z + 1);
-                                g1 = GetGridGradient(x + 1, y + 1, z + 1);
-                                n = math.lerp(g0, g1, t);
-                                p[10] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 11: // Edge 3-7 (X axis)
-                            if (v[3] == 0.0f) p[11] = surfint(x, y, z + 1, r, n);
-                            else if (v[7] == 0.0f) p[11] = surfint(x + 1, y, z + 1, r, n);
-                            else
-                            {
-                                t = v[3] / (v[3] - v[7]);
-                                r.y = y;
-                                r.z = z + 1;
-                                r.x = x + t;
-                                g0 = GetGridGradient(x, y, z + 1);
-                                g1 = GetGridGradient(x + 1, y, z + 1);
-                                n = math.lerp(g0, g1, t);
-                                p[11] = store_point_normal(r, n, col);
-                            }
-                            break;
-                        case 12: // Interior center
-                            r.x = x + 0.5f;
-                            r.y = y + 0.5f;
-                            r.z = z + 0.5f;
-                            var sumG = GetGridGradient(x, y, z) + GetGridGradient(x + 1, y, z)
-                                                                + GetGridGradient(x, y + 1, z) +
-                                                                GetGridGradient(x + 1, y + 1, z)
-                                                                + GetGridGradient(x, y, z + 1) +
-                                                                GetGridGradient(x + 1, y, z + 1)
-                                                                + GetGridGradient(x, y + 1, z + 1) +
-                                                                GetGridGradient(x + 1, y + 1, z + 1);
-                            n = sumG / 8.0f;
-                            p[12] = store_point_normal(r, n, col);
-                            break;
+                        // Interior center は元コード同等（勾配平均）
+                        float3 center = new float3(x + 0.5f, y + 0.5f, z + 0.5f);
+                        float3 sumG =
+                            GetGridGradient(x, y, z) + GetGridGradient(x + 1, y, z) +
+                            GetGridGradient(x, y + 1, z) + GetGridGradient(x + 1, y + 1, z) +
+                            GetGridGradient(x, y, z + 1) + GetGridGradient(x + 1, y, z + 1) +
+                            GetGridGradient(x, y + 1, z + 1) + GetGridGradient(x + 1, y + 1, z + 1);
+
+                        float3 n = sumG / 8.0f;
+                        p[12] = writer.AddVertex(GridToWorld(center), Normalized(n), col);
+                    }
+                    else
+                    {
+                        // 12本のエッジは共通関数で生成
+                        p[edgeId] = WriteEdgeVertex(writer, x, y, z, edgeId, 0.0f, v, col);
                     }
                 }
 
-                f[k] = p[c];
+                if (k == 0) f0 = p[edgeId];
+                else if (k == 1) f1 = p[edgeId];
+                else f2 = p[edgeId];
+
                 i >>= 4;
             }
 
-            if (f[0] != f[1] && f[0] != f[2] && f[1] != f[2])
+            if (f0 != f1 && f0 != f2 && f1 != f2)
             {
 #if MC_Normal_neg
-				if (m != 0)
+                if (m != 0)
 #else
                 if (m == 0)
 #endif
                 {
-                    f[2] = f[0];
-                    f[0] = p[c];
+                    // 既存挙動維持：頂点順の入れ替え
+                    int tmp = f2;
+                    f2 = f0;
+                    f0 = tmp;
                 }
 
-                store_triangle(new int3(f[0], f[1], f[2]));
+                writer.AddTriangle(f0, f1, f2);
             }
         }
     }
@@ -803,32 +687,31 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
     private Mesh calc_isosurface(float iso, float[] cells)
     {
         _F = cells;
-        int x, y, z;
-        var nx = _MCn.x;
-        var ny = _MCn.y;
-        var nz = _MCn.z;
-        int i;
 
-        var V = new float[8];
-        float V00, V10, V01, V11;
+        int nx = _MCn.x;
+        int ny = _MCn.y;
+        int nz = _MCn.z;
 
-        _MC_S = new surface();
-        _MC_S.V = new NativeList<float3>(4096, Allocator.Temp);
-        _MC_S.N = new NativeList<float3>(4096, Allocator.Temp);
-        _MC_S.C = new NativeList<Color>(4096, Allocator.Temp);
-        _MC_S.T = new List<int>();
-        _MC_S.nV = 0;
-
-        for (z = 0; z < nz; z++)
+        var writer = new CpuSurfaceWriter
         {
-            for (y = 0; y < ny; y++)
+            V = new NativeList<float3>(4096, Allocator.Temp),
+            N = new NativeList<float3>(4096, Allocator.Temp),
+            C = new NativeList<Color>(4096, Allocator.Temp),
+            T = new List<int>(4096),
+        };
+
+        float[] V = new float[8];
+
+        for (int z = 0; z < nz; z++)
+        {
+            for (int y = 0; y < ny; y++)
             {
-                for (x = 0; x < nx; x++)
+                for (int x = 0; x < nx; x++)
                 {
-                    V00 = GetCellValue(x, y, z);
-                    V01 = GetCellValue(x, y + 1, z);
-                    V10 = GetCellValue(x, y, z + 1);
-                    V11 = GetCellValue(x, y + 1, z + 1);
+                    float V00 = GetCellValue(x, y, z);
+                    float V01 = GetCellValue(x, y + 1, z);
+                    float V10 = GetCellValue(x, y, z + 1);
+                    float V11 = GetCellValue(x, y + 1, z + 1);
                     V[0] = iso - V00;
                     V[1] = iso - V01;
                     V[2] = iso - V11;
@@ -843,7 +726,8 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
                     V[6] = iso - V11;
                     V[7] = iso - V10;
 
-                    i = ((V[0] >= 0f ? 1 : 0) << 7) |
+                    int idx =
+                        ((V[0] >= 0f ? 1 : 0) << 7) |
                         ((V[1] >= 0f ? 1 : 0) << 6) |
                         ((V[2] >= 0f ? 1 : 0) << 5) |
                         ((V[3] >= 0f ? 1 : 0) << 4) |
@@ -852,24 +736,25 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
                         ((V[6] >= 0f ? 1 : 0) << 1) |
                         ((V[7] >= 0f ? 1 : 0) << 0);
 
-                    if (i != 0 && i != 0xff)
+                    if (idx != 0 && idx != 0xff)
                     {
-                        find_case(x, y, z, i, V);
+                        find_case(writer, x, y, z, idx, V);
                     }
                 }
             }
         }
 
         var mesh = new Mesh();
-        if (_MC_S.T.Count > 0)
+        if (writer.T.Count > 0)
         {
             mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-            mesh.SetVertices(_MC_S.V.AsArray());
-            mesh.SetTriangles(_MC_S.T, 0);
-            mesh.SetNormals(_MC_S.N.AsArray());
-            mesh.SetColors(_MC_S.C.AsArray());
+            mesh.SetVertices(writer.V.AsArray());
+            mesh.SetTriangles(writer.T, 0);
+            mesh.SetNormals(writer.N.AsArray());
+            mesh.SetColors(writer.C.AsArray());
         }
 
+        // NativeList はここでは Dispose しない（元コードと合わせるなら呼び出し側で管理 or using化）
         return mesh;
     }
 
@@ -877,11 +762,14 @@ float face_tests(int ind, int sw, float v[12]) // 戻り値をfloatにしてお�
     {
         init_temp_isosurface(grd);
         PrecalcGradients(cells);
+
         var mesh = calc_isosurface(iso, cells);
+
         if (_gradients.IsCreated)
         {
             _gradients.Dispose();
         }
+
         return mesh;
     }
 }

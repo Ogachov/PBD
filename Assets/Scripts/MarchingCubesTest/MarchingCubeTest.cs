@@ -1,9 +1,11 @@
+using System;
 using System.Collections.Generic;
 using Unity.Mathematics;
 using UnityEngine;
 
 public class MarchingCubeTest : MonoBehaviour
 {
+    [SerializeField] private bool updateEveryFrame = false;
     [SerializeField] private bool prepareComputeShader = false;
     [SerializeField] private GameObject cubePrefab;
     [SerializeField] private bool drawCubes = false;
@@ -15,6 +17,21 @@ public class MarchingCubeTest : MonoBehaviour
 
     [SerializeField] private bool UseSphere = false;
     [SerializeField] private float sphereRadius = 1.0f;
+    
+    // compute shader関係
+    [SerializeField] private bool UseComputeShader = false;
+    [SerializeField] private ComputeShader computeShader;
+    [SerializeField, Range(1, 1_000_000)] private int maxTriangles = 1_000_000;
+    [SerializeField] private Material material;
+    [SerializeField] private Vector3 boundsPadding = new Vector3(2f, 2f, 2f);
+
+    private GraphicsBuffer _cellBuffer;
+    private GraphicsBuffer _gradientBuffer;
+    private GraphicsBuffer _vertexBuffer;
+    private GraphicsBuffer _indirectArgsBuffer;
+    private int k_BuildGradients;
+    private int k_BuildIsoSurface;
+    private int k_InitIndirectArgs;
     
     private float _lastIsoLevel = -1.0f;
     private Vector3 _lastNoiseOffset = Vector3.zero;
@@ -38,6 +55,89 @@ public class MarchingCubeTest : MonoBehaviour
     private void Start()
     {
         _meshFilter = GetComponent<MeshFilter>();
+        
+        k_BuildGradients = computeShader.FindKernel("BuildGradients");
+        k_BuildIsoSurface = computeShader.FindKernel("BuildIsoSurface");
+        k_InitIndirectArgs = computeShader.FindKernel("InitIndirectArgs");
+    }
+    
+    private void InitComputeShaderBuffers()
+    {
+        _cellBuffer?.Release();
+        _gradientBuffer?.Release();
+        _vertexBuffer?.Release();
+        _indirectArgsBuffer?.Release();
+
+        _cellBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _cells.Length, sizeof(float));
+
+        _gradientBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _cells.Length, sizeof(float) * 3);
+
+        var vertexCount = maxTriangles * 3;
+        _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, vertexCount, sizeof(float) * 4);
+
+        // Indirect args: uint4 = (vertexCountPerInstance, instanceCount, startVertex, startInstance)
+        _indirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, 1, sizeof(uint) * 4);
+        _indirectArgsBuffer.SetData(new[] { 0, 1, 0, 0 });
+
+        computeShader.SetBuffer(k_BuildGradients, "_Cells", _cellBuffer);
+        computeShader.SetBuffer(k_BuildGradients, "_Gradients", _gradientBuffer);
+        
+        computeShader.SetBuffer(k_BuildIsoSurface, "_Cells", _cellBuffer);
+        computeShader.SetBuffer(k_BuildIsoSurface, "_Gradients", _gradientBuffer);
+        computeShader.SetBuffer(k_BuildIsoSurface, "_Vertices", _vertexBuffer);
+        
+        // 間接描画用の引数バッファを初期化
+        computeShader.SetBuffer(k_InitIndirectArgs, "_IndirectArgs", _indirectArgsBuffer);
+        computeShader.Dispatch(k_InitIndirectArgs, 1, 1, 1);
+    }
+    
+    private void KickComputeShader(MC33Grid grid, float isoLevel)
+    {
+        computeShader.SetInts("_N", grid.N.x, grid.N.y, grid.N.z);
+        computeShader.SetFloats("_Origin", grid.r0.x, grid.r0.y, grid.r0.z);
+        computeShader.SetFloats("_Step", grid.d.x, grid.d.y, grid.d.z);
+        computeShader.SetFloat("_Iso", isoLevel);
+
+        var threadGroupsX = Mathf.CeilToInt((float)_gridN.x / 8);
+        var threadGroupsY = Mathf.CeilToInt((float)_gridN.y / 8);
+        var threadGroupsZ = Mathf.CeilToInt((float)_gridN.z / 8);
+
+        _vertexBuffer.SetCounterValue(0);
+        // 勾配計算
+        computeShader.Dispatch(k_BuildGradients, threadGroupsX, threadGroupsY, threadGroupsZ);
+        
+        // 等値面計算
+        computeShader.Dispatch(k_BuildIsoSurface, threadGroupsX, threadGroupsY, threadGroupsZ);
+        
+        // AppendCounter(頂点数) → args[0] (vertexCountPerInstance) にコピー
+        GraphicsBuffer.CopyCount(_vertexBuffer, _indirectArgsBuffer, 0);
+
+        int[] countArray = {0, 0, 0, 0};
+        _indirectArgsBuffer.GetData(countArray);
+        Debug.Log(countArray[0] + " vertices generated.");
+        
+        var n = Mathf.Min(4, countArray[0]);
+        var tmp = new Vector3[n];
+        _gradientBuffer.GetData(tmp, 0, 0, n);
+        for (var i = 0; i < n; i++)
+        {
+            Debug.Log($"gradient {i}: {tmp[i]}");
+        }
+        
+        // _vertexBufferのカウントをCPU側で使えるようにする
+        
+        if (material != null)
+        {
+            material.SetBuffer("_Vertices", _vertexBuffer);
+        }
+    }
+
+    private void OnDestroy()
+    {
+        _cellBuffer?.Release();
+        _gradientBuffer?.Release();
+        _vertexBuffer?.Release();
+        _indirectArgsBuffer?.Release();
     }
 
     private void Update()
@@ -53,6 +153,22 @@ public class MarchingCubeTest : MonoBehaviour
             }
         }
 
+        // 前回とパラメータが異なっていたらバッファを初期化
+        if (UseComputeShader)
+        {
+            if (_cellBuffer == null || !Mathf.Approximately(isoLevel, _lastIsoLevel) || noiseOffset != _lastNoiseOffset ||
+                !Mathf.Approximately(noiseScale, _lastNoiseScale) || gridSize != _lastGridSize ||
+                !Mathf.Approximately(_lastSphereRadius, sphereRadius))
+            {
+                InitComputeShaderBuffers();
+            }
+
+            if (_cellBuffer != null)
+            {
+                _cellBuffer.SetData(_cells);
+            }
+        }
+        
         _lastIsoLevel = isoLevel;
         _lastNoiseOffset = noiseOffset;
         _lastNoiseScale = noiseScale;
@@ -67,7 +183,29 @@ public class MarchingCubeTest : MonoBehaviour
             d = new float3(1.0f, 1.0f, 1.0f)
         };
 
-        if (prepareComputeShader)
+        if (UseComputeShader)
+        {
+            _meshFilter.mesh = null;
+            
+            KickComputeShader(grid, isoLevel);
+
+            if (material != null && _indirectArgsBuffer != null)
+            {
+                // カリングに必要な bounds（とりあえずグリッド全体を覆う）
+                var center = transform.position + new Vector3(0f, _gridN.y * 0.5f, 0f);
+                var size = new Vector3(_gridN.x, _gridN.y, _gridN.z) + boundsPadding;
+                var bounds = new Bounds(center, size);
+
+                var rp = new RenderParams(material)
+                {
+                    worldBounds = bounds
+                };
+
+                // MeshTopology.Triangles: args[0] は「頂点数」（三角形数*3）でOK
+                Graphics.RenderPrimitivesIndirect(rp, MeshTopology.Triangles, _indirectArgsBuffer, 1);
+            }
+        }
+        else if (prepareComputeShader)
         {
             var mesh = _mc33PrepareCS.calculate_isosurface(grid, isoLevel, _cells);
             mesh.name = "MC33_isosurface";

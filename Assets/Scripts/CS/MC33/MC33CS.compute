@@ -1,101 +1,603 @@
-#pragma kernel InitPoolList
-#pragma kernel InitParticles
-#pragma kernel SpawnParticles
-#pragma kernel UpdateParticles
+// MC33IsoSurface.compute
+#pragma kernel BuildGradients
+#pragma kernel BuildIsoSurface
+#pragma kernel InitIndirectArgs
 
-// RWStructuredBuffer<Particle> Particles;
-// AppendStructuredBuffer<uint> AliveList;
-//
-// AppendStructuredBuffer<uint> PoolAppend;
-// ConsumeStructuredBuffer<uint> PoolConsume;
+#include "MC33CS.hlsl"
+#include "MC33LookUpTable.hlsl"
+
+StructuredBuffer<float> _Cells;                 // (Nx+1)*(Ny+1)*(Nz+1)
+RWStructuredBuffer<float3> _Gradients;          // 同サイズ
+AppendStructuredBuffer<MCVertex> _Vertices;     // 3頂点=1三角形（MeshTopology.Triangles）
+RWStructuredBuffer<uint> _IndirectArgs;         // uint[4] (vertexCountPerInstance, instanceCount, startVertex, startInstance)
 
 cbuffer Params
 {
-    uint _Capacity;
-    uint _FrameCount;
-    uint _SpawnCount;
-    float _DeltaTime;
-    float _Gravity;
-    float3 _BoundsCenter;
-    float3 _BoundsSize;
-    // 斥力が発生する半径
-    float _RepulsionRadius;
-    float _RepulsionStrength;
+    int3   _N;          // セル数 (nx, ny, nz)
+    float3 _Origin;     // r0
+    float3 _Step;       // d
+    float  _Iso;
 }
 
-uint GetSeed(uint3 dispatchThreadID, uint _FrameCount)
+uint GridIndex(int x, int y, int z)
 {
-    return (dispatchThreadID.x * 73856093u) ^ (dispatchThreadID.y * 19349663u) ^ (dispatchThreadID.z * 83492791u) ^ _FrameCount;
+    uint nx1 = (uint)(_N.x + 1);
+    uint ny1 = (uint)(_N.y + 1);
+    return (uint)x + (uint)y * nx1 + (uint)z * nx1 * ny1;
 }
 
-uint Hash(uint x)
+float Sample(int x, int y, int z)
 {
-    x ^= x >> 17;
-    x *= 0xED5AD4BBu;
-    x ^= x >> 11;
-    x *= 0xAC4C1B51u;
-    x ^= x >> 15;
-    x *= 0x31848BABu;
-    x ^= x >> 14;
-    return x;
+    return _Cells[GridIndex(x, y, z)];
 }
 
-// [0.0, 1.0)の範囲でランダムなfloat3を生成
-float3 RandomFloat3(uint seed)
+float3 GridToWorld(float3 g)
 {
-    uint h1 = Hash(seed);
-    uint h2 = Hash(seed * 1664525u + 1013904223u);
-    uint h3 = Hash(seed * 22695477u + 1u);
-
-    return float3(
-        h1 / 4294967296.0,
-        h2 / 4294967296.0,
-        h3 / 4294967296.0
-    );
+    return g;
+    // return g * _Step + _Origin;
 }
 
-// [numthreads(128,1,1)]
-// void InitPoolList (uint3 id : SV_DispatchThreadID)
-// {
-//     uint i = id.x;
-//     if (i >= _Capacity) return;
-//
-//     PoolAppend.Append(i);
-// }
-
-// [numthreads(128,1,1)]
-// void InitParticles(uint3 id : SV_DispatchThreadID)
-// {
-//     uint i = id.x;
-//     if (i >= _Capacity) return;
-//     Particle p;
-//     p.position = float3(0,0,0);
-//     p.radiusScale = 1.0 + (float)i / (_Capacity * 10.0);    // ID順に[1.0, 1.1)の範囲でサイズを微妙に変える
-//     p.velocity = float3(0,0,0);
-//     p.life = 0.0;
-//     // p.color = half4(1,1,1,1);
-//     p.color = (float)i / (float)_Capacity; 
-//     Particles[i] = p;
-// }
-
-// [numthreads(128,1,1)]
-// void SpawnParticles (uint3 id : SV_DispatchThreadID)
-// {
-//     uint i = id.x;
-//     if (i >= _SpawnCount) return;
-//
-//     uint newIndex = PoolConsume.Consume();
-//  
-//     Particle p = Particles[newIndex];
-//     float3 pos = RandomFloat3(GetSeed(id, _FrameCount)) * 2.0f - 1.0f;
-//     p.position = float3(pos.x, 9.0f, pos.z);
-//     p.velocity = float3(0.0f, 0.0f, 0.0f);
-//     // p.color = half4(1.0, 1.0, 1.0, 1.0);
-//     p.life = 1.0f;
-//     Particles[newIndex] = p;
-// }
-
-[numthreads(128,1,1)]
-void UpdateParticles (uint3 id : SV_DispatchThreadID)
+float3 GradientFromCells(int x, int y, int z)
 {
+    float gx, gy, gz;
+
+    if (x == 0) gx = Sample(0, y, z) - Sample(1, y, z);
+    else if (x == _N.x) gx = Sample(x - 1, y, z) - Sample(x, y, z);
+    else gx = 0.5 * (Sample(x - 1, y, z) - Sample(x + 1, y, z));
+
+    if (y == 0) gy = Sample(x, 0, z) - Sample(x, 1, z);
+    else if (y == _N.y) gy = Sample(x, y - 1, z) - Sample(x, y, z);
+    else gy = 0.5 * (Sample(x, y - 1, z) - Sample(x, y + 1, z));
+
+    if (z == 0) gz = Sample(x, y, 0) - Sample(x, y, 1);
+    else if (z == _N.z) gz = Sample(x, y, z - 1) - Sample(x, y, z);
+    else gz = 0.5 * (Sample(x, y, z - 1) - Sample(x, y, z + 1));
+
+    return float3(gx, gy, gz);
+}
+
+float3 GradientAt(int x, int y, int z)
+{
+    return _Gradients[GridIndex(x, y, z)];
+}
+
+MCVertex MakeVertex(float3 gridPos, float3 normal)
+{
+    MCVertex v;
+    uint packed = PackOct16(normalize(normal));
+    v.position = float4(GridToWorld(gridPos), asfloat(packed)); // w に oct16 を押し込み
+    return v;
+}
+
+void AppendPackedPos(float4 packedPos)
+{
+    MCVertex v;
+    v.position = packedPos;
+    _Vertices.Append(v);
+}
+
+static const int3 s_cornerOffset[8] =
+{
+    int3(0,0,0), int3(0,1,0), int3(0,1,1), int3(0,0,1),
+    int3(1,0,0), int3(1,1,0), int3(1,1,1), int3(1,0,1)
+};
+
+static const int2 s_edgeCorners[12] =
+{
+    int2(0,1), int2(1,2), int2(3,2), int2(0,3),
+    int2(4,5), int2(5,6), int2(7,6), int2(4,7),
+    int2(0,4), int2(1,5), int2(2,6), int2(3,7)
+};
+
+// ---- face/interior test（C#版相当）----
+int FaceTests(inout int face[6], int ind, int sw, float v[8])
+{
+    if ((ind & 0x80) != 0)
+    {
+        face[0] = ((ind & 0xCC) == 0x84 ? (v[0] * v[5] < v[1] * v[4] ? -sw : sw) : 0);
+        face[3] = ((ind & 0x99) == 0x81 ? (v[0] * v[7] < v[3] * v[4] ? -sw : sw) : 0);
+        face[4] = ((ind & 0xF0) == 0xA0 ? (v[0] * v[2] < v[1] * v[3] ? -sw : sw) : 0);
+    }
+    else
+    {
+        face[0] = ((ind & 0xCC) == 0x48 ? (v[0] * v[5] < v[1] * v[4] ? sw : -sw) : 0);
+        face[3] = ((ind & 0x99) == 0x18 ? (v[0] * v[7] < v[3] * v[4] ? sw : -sw) : 0);
+        face[4] = ((ind & 0xF0) == 0x50 ? (v[0] * v[2] < v[1] * v[3] ? sw : -sw) : 0);
+    }
+
+    if ((ind & 0x02) != 0)
+    {
+        face[1] = ((ind & 0x66) == 0x42 ? (v[1] * v[6] < v[2] * v[5] ? -sw : sw) : 0);
+        face[2] = ((ind & 0x33) == 0x12 ? (v[3] * v[6] < v[2] * v[7] ? -sw : sw) : 0);
+        face[5] = ((ind & 0x0F) == 0x0A ? (v[4] * v[6] < v[5] * v[7] ? -sw : sw) : 0);
+    }
+    else
+    {
+        face[1] = ((ind & 0x66) == 0x24 ? (v[1] * v[6] < v[2] * v[5] ? sw : -sw) : 0);
+        face[2] = ((ind & 0x33) == 0x21 ? (v[3] * v[6] < v[2] * v[7] ? sw : -sw) : 0);
+        face[5] = ((ind & 0x0F) == 0x05 ? (v[4] * v[6] < v[5] * v[7] ? sw : -sw) : 0);
+    }
+
+    return face[0] + face[1] + face[2] + face[3] + face[4] + face[5];
+}
+
+int FaceTest1(int faceId, float v[8])
+{
+    switch (faceId)
+    {
+        case 0: return (v[0] * v[5] < v[1] * v[4] ? 0x48 : 0x84);
+        case 1: return (v[1] * v[6] < v[2] * v[5] ? 0x24 : 0x42);
+        case 2: return (v[3] * v[6] < v[2] * v[7] ? 0x21 : 0x12);
+        case 3: return (v[0] * v[7] < v[3] * v[4] ? 0x18 : 0x81);
+        case 4: return (v[0] * v[2] < v[1] * v[3] ? 0x50 : 0xA0);
+        case 5: return (v[4] * v[6] < v[5] * v[7] ? 0x05 : 0x0A);
+    }
+    return 0;
+}
+
+int InteriorTest(int i, int flagtplane, float v[8])
+{
+    float At = v[4] - v[0];
+    float Bt = v[5] - v[1];
+    float Ct = v[6] - v[2];
+    float Dt = v[7] - v[3];
+    float t = At * Ct - Bt * Dt;
+
+    if ((i & 0x01) != 0) { if (t <= 0.0) return 0; }
+    else { if (t >= 0.0) return 0; }
+
+    t = 0.5 * (v[3] * Bt + v[1] * Dt - v[2] * At - v[0] * Ct) / t;
+    if (t <= 0.0 || t >= 1.0) return 0;
+
+    At = v[0] + At * t;
+    Bt = v[1] + Bt * t;
+    Ct = v[2] + Ct * t;
+    Dt = v[3] + Dt * t;
+
+    float sBt = sign(Bt), sDt = sign(Dt), sAt = sign(At), sCt = sign(Ct), sVi = sign(v[i]);
+
+    if ((i & 0x01) != 0)
+    {
+        if (At * Ct < Bt * Dt && sBt == sDt) return (sBt == sVi) ? 1 : 0 + flagtplane;
+    }
+    else
+    {
+        if (At * Ct > Bt * Dt && sAt == sCt) return (sAt == sVi) ? 1 : 0 + flagtplane;
+    }
+    return 0;
+}
+
+// エッジ頂点生成（セル内キャッシュ：packedPos[edge]=float4(worldPos, asfloat(oct16))）
+bool EnsureEdgeVertex(int cellX, int cellY, int cellZ, int edgeId, float v[8], inout bool has[13], inout float4 packedPos[13])
+{
+    if (has[edgeId]) return true;
+
+    int2 cc = s_edgeCorners[edgeId];
+    int ca = cc.x;
+    int cb = cc.y;
+
+    float va = v[ca];
+    float vb = v[cb];
+
+    int3 oa = s_cornerOffset[ca];
+    int3 ob = s_cornerOffset[cb];
+
+    int ax = cellX + oa.x, ay = cellY + oa.y, az = cellZ + oa.z;
+    int bx = cellX + ob.x, by = cellY + ob.y, bz = cellZ + ob.z;
+
+    // 浮動小数の "== 0" は危険なので epsilon に寄せる（CPU版よりGPU版で重要）
+    const float epsZero = 1e-8;
+
+    if (abs(va) < epsZero)
+    {
+        MCVertex vv = MakeVertex(float3(ax, ay, az), GradientAt(ax, ay, az));
+        packedPos[edgeId] = vv.position;
+        has[edgeId] = true;
+        return true;
+    }
+    if (abs(vb) < epsZero)
+    {
+        MCVertex vv = MakeVertex(float3(bx, by, bz), GradientAt(bx, by, bz));
+        packedPos[edgeId] = vv.position;
+        has[edgeId] = true;
+        return true;
+    }
+
+    float denom = (va - vb);
+    const float epsDenom = 1e-8;
+
+    // 交点が定義できない/不安定：このエッジ頂点は作らない（=三角形を捨てる方向）
+    if (abs(denom) < epsDenom)
+        return false;
+
+    float t = va / denom;
+
+    // t が NaN/Inf になるケースの保険
+    if (!isfinite(t))
+        return false;
+
+    float3 p = lerp(float3(ax, ay, az), float3(bx, by, bz), t);
+    float3 n = lerp(GradientAt(ax, ay, az), GradientAt(bx, by, bz), t);
+
+    // 入力が壊れてる場合は捨てる
+    if (any(!isfinite(p)) || any(!isfinite(n)))
+        return false;
+
+    MCVertex vv = MakeVertex(p, n);
+    packedPos[edgeId] = vv.position;
+    has[edgeId] = true;
+    return true;
+}
+
+bool EnsureCenterVertex(int cellX, int cellY, int cellZ, inout bool has[13], inout float4 packedPos[13])
+{
+    const int edgeId = 12;
+    if (has[edgeId]) return true;
+
+    float3 p = float3(cellX + 0.5, cellY + 0.5, cellZ + 0.5);
+    float3 n =
+        GradientAt(cellX,     cellY,     cellZ) +
+        GradientAt(cellX + 1, cellY,     cellZ) +
+        GradientAt(cellX,     cellY + 1, cellZ) +
+        GradientAt(cellX + 1, cellY + 1, cellZ) +
+        GradientAt(cellX,     cellY,     cellZ + 1) +
+        GradientAt(cellX + 1, cellY,     cellZ + 1) +
+        GradientAt(cellX,     cellY + 1, cellZ + 1) +
+        GradientAt(cellX + 1, cellY + 1, cellZ + 1);
+
+    n *= (1.0 / 8.0);
+
+    if (any(!isfinite(p)) || any(!isfinite(n)))
+        return false;
+
+    MCVertex vv = MakeVertex(p, n);
+    packedPos[edgeId] = vv.position;
+    has[edgeId] = true;
+    return true;
+}
+
+void EmitTriangle(float4 p0, float4 p1, float4 p2)
+{
+    AppendPackedPos(p0);
+    AppendPackedPos(p1);
+    AppendPackedPos(p2);
+}
+
+// Case判定＆出力（本体）
+void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
+{
+    int pcase = Case_1_Top;
+    int caseIndex = 0;
+
+    int m = cubeIndex & 0x80;
+    int c = Case_Index[(m != 0) ? (cubeIndex ^ 0xFF) : cubeIndex];
+
+    int face[6] = {0,0,0,0,0,0};
+
+    switch (c >> 8)
+    {
+        case 1: if ((c & 0x0080) != 0) m ^= 0x80; pcase = Case_1_Top; caseIndex = (c & 0x7F); break;
+        case 2: if ((c & 0x0080) != 0) m ^= 0x80; pcase = Case_2_Top; caseIndex = (c & 0x7F); break;
+        case 3:
+            if ((c & 0x0080) != 0) m ^= 0x80;
+            if (((m != 0 ? cubeIndex : (cubeIndex ^ 0xFF)) & FaceTest1((c & 0x7F) >> 1, v)) != 0)
+            { pcase = Case_3_2_Top; caseIndex = 4 * (c & 0x7F); }
+            else
+            { pcase = Case_3_1_Top; caseIndex = 2 * (c & 0x7F); }
+            break;
+        case 4:
+            if ((c & 0x0080) != 0) m ^= 0x80;
+            if (InteriorTest((c & 0x7F), 0, v) != 0)
+            { pcase = Case_4_2_Top; caseIndex = 6 * (c & 0x7F); }
+            else
+            { pcase = Case_4_1_Top; caseIndex = 2 * (c & 0x7F); }
+            break;
+        case 5: if ((c & 0x0080) != 0) m ^= 0x80; pcase = Case_5_Top; caseIndex = (c & 0x7F); break;
+        case 6:
+            if ((c & 0x0080) != 0) m ^= 0x80;
+            if (((m != 0 ? cubeIndex : (cubeIndex ^ 0xFF)) & FaceTest1((c & 0x7F) % 6, v)) != 0)
+            { pcase = Case_6_2_Top; caseIndex = 5 * (c & 0x7F); }
+            else if (InteriorTest((c & 0x7F) / 6, 0, v) != 0)
+            { pcase = Case_6_1_2_Top; caseIndex = 7 * (c & 0x7F); }
+            else
+            { pcase = Case_6_1_1_Top; caseIndex = 3 * (c & 0x7F); }
+            break;
+        case 7:
+            if ((c & 0x0080) != 0) m ^= 0x80;
+            switch (FaceTests(face, cubeIndex, (m != 0 ? 1 : -1), v))
+            {
+                case -3:
+                    pcase = Case_7_1_Top;
+                    caseIndex = 3 * (c & 0x7F);
+                    break;
+
+                case -1:
+                    if (face[4] + face[5] == 1)
+                    {
+                        pcase = Case_7_2_1_Top;
+                        caseIndex = 5 * (c & 0x7F);
+                    }
+                    else
+                    {
+                        int fi = (33825 >> ((c & 0x7F) << 1)) & 3;
+                        pcase = (face[fi] == 1) ? Case_7_2_3_Top : Case_7_2_2_Top;
+                        caseIndex = 5 * (c & 0x7F);
+                    }
+                    break;
+
+                case 1:
+                    if (face[4] + face[5] == -1)
+                    {
+                        pcase = Case_7_3_3_Top;
+                        caseIndex = 9 * (c & 0x7F);
+                    }
+                    else
+                    {
+                        int fi = (33825 >> ((c & 0x7F) << 1)) & 3;
+                        pcase = (face[fi] == 1) ? Case_7_3_2_Top : Case_7_3_1_Top;
+                        caseIndex = 9 * (c & 0x7F);
+                    }
+                    break;
+
+                case 3:
+                    if (InteriorTest((c & 0x7F) >> 1, 0, v) != 0)
+                    { pcase = Case_7_4_2_Top; caseIndex = 9 * (c & 0x7F); }
+                    else
+                    { pcase = Case_7_4_1_Top; caseIndex = 5 * (c & 0x7F); }
+                    break;
+            }
+            break;
+
+        case 8:
+            pcase = Case_8_Top;
+            caseIndex = (c & 0x7F);
+            break;
+
+        case 9:
+            pcase = Case_9_Top;
+            caseIndex = (c & 0x7F);
+            break;
+
+        case 10:
+            switch (FaceTests(face, cubeIndex, (m != 0 ? 1 : -1), v))
+            {
+                case -2:
+                {
+                    bool a = (InteriorTest(0, 0, v) != 0);
+                    bool b = (InteriorTest(((c & 0x01) != 0) ? 1 : 3, 0, v) != 0);
+
+                    if (((c & 0x7F) != 0) ? (a || b) : (InteriorTest(0, 0, v) != 0))
+                    { pcase = Case_10_1_2_1_Top; caseIndex = 8 * (c & 0x7F); }
+                    else
+                    { pcase = Case_10_1_1_1_Top; caseIndex = 4 * (c & 0x7F); }
+                }
+                    break;
+
+                case 2:
+                {
+                    bool a = (InteriorTest(2, 0, v) != 0);
+                    bool b = (InteriorTest(((c & 0x01) != 0) ? 3 : 1, 0, v) != 0);
+
+                    if (((c & 0x7F) != 0) ? (a || b) : (InteriorTest(1, 0, v) != 0))
+                    { pcase = Case_10_1_2_2_Top; caseIndex = 8 * (c & 0x7F); }
+                    else
+                    { pcase = Case_10_1_1_2_Top; caseIndex = 4 * (c & 0x7F); }
+                }
+                    break;
+
+                case 0:
+                {
+                    // C#版と同様：face[0] or face[4] のどちらかを (c&0x7F) で選ぶ
+                    int fi = 4 >> ((c & 0x7F) << 1);
+                    pcase = (face[fi] == 1) ? Case_10_2_2_Top : Case_10_2_1_Top;
+                    caseIndex = 8 * (c & 0x7F);
+                }
+                    break;
+            }
+            break;
+
+        case 11:
+            pcase = Case_11_Top;
+            caseIndex = (c & 0x7F);
+            break;
+
+        case 12:
+            switch (FaceTests(face, cubeIndex, (m != 0 ? 1 : -1), v))
+            {
+                case -2:
+                    if (InteriorTest((int)LookUp_12_test_index(0, (int)(c & 0x7F)), 0, v) != 0)
+                    { pcase = Case_12_1_2_1_Top; caseIndex = 8 * (c & 0x7F); }
+                    else
+                    { pcase = Case_12_1_1_1_Top; caseIndex = 4 * (c & 0x7F); }
+                    break;
+
+                case 2:
+                    if (InteriorTest((int)LookUp_12_test_index(1, (int)(c & 0x7F)), 0, v) != 0)
+                    { pcase = Case_12_1_2_2_Top; caseIndex = 8 * (c & 0x7F); }
+                    else
+                    { pcase = Case_12_1_1_2_Top; caseIndex = 4 * (c & 0x7F); }
+                    break;
+
+                case 0:
+                    pcase = (face[(int)LookUp_12_test_index(2, (int)(c & 0x7F))] == 1) ? Case_12_2_2_Top : Case_12_2_1_Top;
+                    caseIndex = 8 * (c & 0x7F);
+                    break;
+            }
+            break;
+
+        case 13:
+        {
+            int ct = FaceTests(face, cubeIndex, (m != 0 ? 1 : -1), v);
+
+            switch (abs(ct))
+            {
+                case 6:
+                    pcase = Case_13_1_Top;
+                    caseIndex = 4 * ((ct > 0) ? 1 : 0);
+                    break;
+
+                case 4:
+                {
+                    int cc = (ct >> 2); // -1 or +1
+                    int which = 0;
+                    while (which < 6 && face[which] != -cc) ++which;
+
+                    pcase = Case_13_2_Top;
+                    caseIndex = 6 * (3 * cc + 3 + which);
+                    break;
+                }
+
+                case 2:
+                {
+                    int bits =
+                        (((((face[0] < 0) ? 1 : 0) << 1) | ((face[1] < 0) ? 1 : 0)) << 1 |
+                         ((face[2] < 0) ? 1 : 0)) << 1 |
+                        ((face[3] < 0) ? 1 : 0);
+
+                    bits = (bits << 1) | ((face[4] < 0) ? 1 : 0);
+
+                    pcase = Case_13_3_Top;
+                    caseIndex = 10 * (25 - bits + ((((bits > 10) ? 1 : 0) + ((bits > 20) ? 1 : 0)) << 1));
+                    break;
+                }
+
+                case 0:
+                {
+                    int cc = (((face[1] < 0) ? 1 : 0) << 1) | ((face[5] < 0) ? 1 : 0);
+
+                    if (face[0] * face[1] * face[5] == 1)
+                    {
+                        pcase = Case_13_4_Top;
+                        caseIndex = 12 * cc;
+                    }
+                    else
+                    {
+                        int it = InteriorTest(cc, 1, v);
+                        if (it != 0)
+                        {
+                            pcase = Case_13_5_2_Top;
+                            caseIndex = 10 * (cc | ((it & 1) << 2));
+                        }
+                        else
+                        {
+                            pcase = Case_13_5_1_Top;
+                            caseIndex = 6 * cc;
+                        }
+                    }
+                    break;
+                }
+            }
+            break;
+        }
+
+        case 14:
+            pcase = Case_14_Top;
+            caseIndex = (c & 0x7F);
+            break;
+    }
+
+    bool has[13];
+    float4 packedPos[13];
+    [unroll] for (int i = 0; i < 13; i++) { has[i] = false; packedPos[i] = 0; }
+
+    int code = cubeIndex;
+    while (code != 0)
+    {
+        code = LookUp(pcase, caseIndex++);
+
+        int e0 = (code      ) & 0x0F;
+        int e1 = (code >>  4) & 0x0F;
+        int e2 = (code >>  8) & 0x0F;
+
+        bool ok0 = (e0 == 12) ? EnsureCenterVertex(x, y, z, has, packedPos)
+                              : EnsureEdgeVertex(x, y, z, e0, v, has, packedPos);
+
+        bool ok1 = (e1 == 12) ? EnsureCenterVertex(x, y, z, has, packedPos)
+                              : EnsureEdgeVertex(x, y, z, e1, v, has, packedPos);
+
+        bool ok2 = (e2 == 12) ? EnsureCenterVertex(x, y, z, has, packedPos)
+                              : EnsureEdgeVertex(x, y, z, e2, v, has, packedPos);
+
+        if (!(ok0 && ok1 && ok2))
+            continue;
+
+#if defined(MC_Normal_neg)
+        bool flip = (m != 0);
+#else
+        bool flip = (m == 0);
+#endif
+        
+        //  EmitTriangleに正しいデータが渡っていればバグらない事が判明した
+        if (flip) EmitTriangle(packedPos[e2], packedPos[e1], packedPos[e0]);
+        else      EmitTriangle(packedPos[e0], packedPos[e1], packedPos[e2]);
+    }
+}
+
+// ===== Kernels =====
+
+[numthreads(8,8,8)]
+void BuildGradients(uint3 id : SV_DispatchThreadID)
+{
+    int nx1 = _N.x + 1;
+    int ny1 = _N.y + 1;
+    int nz1 = _N.z + 1;
+
+    int x = (int)id.x;
+    int y = (int)id.y;
+    int z = (int)id.z;
+
+    if (x >= nx1 || y >= ny1 || z >= nz1) return;
+
+    _Gradients[GridIndex(x,y,z)] = GradientFromCells(x,y,z);
+}
+
+[numthreads(8,8,8)]
+void BuildIsoSurface(uint3 id : SV_DispatchThreadID)
+{
+    int x = (int)id.x, y = (int)id.y, z = (int)id.z;
+    if (x >= _N.x || y >= _N.y || z >= _N.z) return;
+
+    float v[8];
+
+    float V00 = Sample(x, y, z);
+    float V01 = Sample(x, y + 1, z);
+    float V11 = Sample(x, y + 1, z + 1);
+    float V10 = Sample(x, y, z + 1);
+    v[0] = _Iso - V00;
+    v[1] = _Iso - V01;
+    v[2] = _Iso - V11;
+    v[3] = _Iso - V10;
+
+    V00 = Sample(x + 1, y, z);
+    V01 = Sample(x + 1, y + 1, z);
+    V11 = Sample(x + 1, y + 1, z + 1);
+    V10 = Sample(x + 1, y, z + 1);
+    v[4] = _Iso - V00;
+    v[5] = _Iso - V01;
+    v[6] = _Iso - V11;
+    v[7] = _Iso - V10;
+
+    int idx =
+        ((v[0] >= 0.0 ? 1 : 0) << 7) |
+        ((v[1] >= 0.0 ? 1 : 0) << 6) |
+        ((v[2] >= 0.0 ? 1 : 0) << 5) |
+        ((v[3] >= 0.0 ? 1 : 0) << 4) |
+        ((v[4] >= 0.0 ? 1 : 0) << 3) |
+        ((v[5] >= 0.0 ? 1 : 0) << 2) |
+        ((v[6] >= 0.0 ? 1 : 0) << 1) |
+        ((v[7] >= 0.0 ? 1 : 0) << 0);
+
+    if (idx == 0 || idx == 0xFF) return;
+
+    FindCaseAndEmit(x, y, z, idx, v);
+}
+
+[numthreads(1,1,1)]
+void InitIndirectArgs(uint3 id : SV_DispatchThreadID)
+{
+    // vertexCountPerInstance は CopyCount で毎フレーム上書きする
+    _IndirectArgs[0] = 0;
+    _IndirectArgs[1] = 1; // instanceCount
+    _IndirectArgs[2] = 0; // startVertex
+    _IndirectArgs[3] = 0; // startInstance
 }

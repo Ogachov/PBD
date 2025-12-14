@@ -133,7 +133,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2337075258505543988, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 3515350922751407147, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
       propertyPath: m_LocalPosition.x
@@ -465,8 +465,8 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 36
-  m_fontSizeBase: 36
+  m_fontSize: 24
+  m_fontSizeBase: 24
   m_fontWeight: 400
   m_enableAutoSizing: 0
   m_fontSizeMin: 18
@@ -1152,6 +1152,10 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 0}
     m_Modifications:
+    - target: {fileID: 2690712444111284266, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: 536d6869986fc2049b2be7c0e534c3f5, type: 2}
     - target: {fileID: 4850311853208099898, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: m_LocalScale.x
       value: 0.1
@@ -1209,6 +1213,10 @@ PrefabInstance:
       value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
+      propertyPath: material
+      value: 
+      objectReference: {fileID: 2100000, guid: e2f6f6fa69e5b4b4bbd84e356a422787, type: 2}
+    - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: gridSize.x
       value: 100
       objectReference: {fileID: 0}
@@ -1221,8 +1229,20 @@ PrefabInstance:
       value: 100
       objectReference: {fileID: 0}
     - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
+      propertyPath: maxTriangles
+      value: 1000000
+      objectReference: {fileID: 0}
+    - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: sphereRadius
       value: 2
+      objectReference: {fileID: 0}
+    - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
+      propertyPath: computeShader
+      value: 
+      objectReference: {fileID: 7200000, guid: deed9af253a13d946a100c9254ef006f, type: 3}
+    - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
+      propertyPath: UseComputeShader
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: prepareComputeShader
@@ -1234,7 +1254,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8734656994774550690, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
