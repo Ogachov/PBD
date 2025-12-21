@@ -76,10 +76,10 @@ public class MC33PrepareCS
     private float3 _MC_D;
     private int3 _MCn;
 
-    private float[] _F;
+    private float[] _Volumes;
 
     private NativeArray<float3> _gradients;
-    private int _strideXY;  // フラット化した３次元配列のZ方向のストライド値
+    private int _volumeStrideXY;  // フラット化した３次元配列のZ方向のストライド値
 
     private void init_temp_isosurface(MC33Grid grd)
     {
@@ -87,20 +87,20 @@ public class MC33PrepareCS
         _MC_O = grd.r0;
         _MC_D = grd.d;
 
-        _strideXY = (_MCn.x + 1) * (_MCn.y + 1);
+        _volumeStrideXY = (_MCn.x + 1) * (_MCn.y + 1);
     }
 
-    private int GridIndex(int x, int y, int z)
+    private int VolumeIndex(int x, int y, int z)
     {
-        return x + y * (_MCn.x + 1) + z * _strideXY;
+        return x + y * (_MCn.x + 1) + z * _volumeStrideXY;
     }
 
-    private float GetCellValue(int x, int y, int z)
+    private float GetVolumeValue(int x, int y, int z)
     {
-        return _F[GridIndex(x, y, z)];
+        return _Volumes[VolumeIndex(x, y, z)];
     }
 
-    private void PrecalcGradients(float[] cells)
+    private void PrecalcGradients(float[] volumes)
     {
         var nx1 = _MCn.x + 1;
         var ny1 = _MCn.y + 1;
@@ -116,19 +116,19 @@ public class MC33PrepareCS
                 {
                     float gx, gy, gz;
 
-                    if (x == 0) gx = cells[GridIndex(0, y, z)] - cells[GridIndex(1, y, z)];
-                    else if (x == _MCn.x) gx = cells[GridIndex(x - 1, y, z)] - cells[GridIndex(x, y, z)];
-                    else gx = 0.5f * (cells[GridIndex(x - 1, y, z)] - cells[GridIndex(x + 1, y, z)]);
+                    if (x == 0) gx = volumes[VolumeIndex(0, y, z)] - volumes[VolumeIndex(1, y, z)];
+                    else if (x == _MCn.x) gx = volumes[VolumeIndex(x - 1, y, z)] - volumes[VolumeIndex(x, y, z)];
+                    else gx = 0.5f * (volumes[VolumeIndex(x - 1, y, z)] - volumes[VolumeIndex(x + 1, y, z)]);
 
-                    if (y == 0) gy = cells[GridIndex(x, 0, z)] - cells[GridIndex(x, 1, z)];
-                    else if (y == _MCn.y) gy = cells[GridIndex(x, y - 1, z)] - cells[GridIndex(x, y, z)];
-                    else gy = 0.5f * (cells[GridIndex(x, y - 1, z)] - cells[GridIndex(x, y + 1, z)]);
+                    if (y == 0) gy = volumes[VolumeIndex(x, 0, z)] - volumes[VolumeIndex(x, 1, z)];
+                    else if (y == _MCn.y) gy = volumes[VolumeIndex(x, y - 1, z)] - volumes[VolumeIndex(x, y, z)];
+                    else gy = 0.5f * (volumes[VolumeIndex(x, y - 1, z)] - volumes[VolumeIndex(x, y + 1, z)]);
 
-                    if (z == 0) gz = cells[GridIndex(x, y, 0)] - cells[GridIndex(x, y, 1)];
-                    else if (z == _MCn.z) gz = cells[GridIndex(x, y, z - 1)] - cells[GridIndex(x, y, z)];
-                    else gz = 0.5f * (cells[GridIndex(x, y, z - 1)] - cells[GridIndex(x, y, z + 1)]);
+                    if (z == 0) gz = volumes[VolumeIndex(x, y, 0)] - volumes[VolumeIndex(x, y, 1)];
+                    else if (z == _MCn.z) gz = volumes[VolumeIndex(x, y, z - 1)] - volumes[VolumeIndex(x, y, z)];
+                    else gz = 0.5f * (volumes[VolumeIndex(x, y, z - 1)] - volumes[VolumeIndex(x, y, z + 1)]);
 
-                    _gradients[GridIndex(x, y, z)] = new float3(gx, gy, gz);
+                    _gradients[VolumeIndex(x, y, z)] = new float3(gx, gy, gz);
                 }
             }
         }
@@ -136,7 +136,7 @@ public class MC33PrepareCS
 
     private float3 GetGridGradient(int x, int y, int z)
     {
-        return _gradients[GridIndex(x, y, z)];
+        return _gradients[VolumeIndex(x, y, z)];
     }
 
     // ============================================================
@@ -165,7 +165,7 @@ public class MC33PrepareCS
 
     private int WriteEdgeVertex(
         ISurfaceWriter writer,
-        int cellX, int cellY, int cellZ,
+        int volumeX, int volumeY, int volumeZ,
         int edgeId,
         float isoMinusValuesV0toV7, // ダミー（署名固定用。Compute移植時に整理する）
         float[] v, // v[0..7] をそのまま受ける（GPU側も float v[8] になる想定）
@@ -183,13 +183,13 @@ public class MC33PrepareCS
         int3 oa = s_cornerOffset[ca];
         int3 ob = s_cornerOffset[cb];
 
-        int ax = cellX + oa.x;
-        int ay = cellY + oa.y;
-        int az = cellZ + oa.z;
+        int ax = volumeX + oa.x;
+        int ay = volumeY + oa.y;
+        int az = volumeZ + oa.z;
 
-        int bx = cellX + ob.x;
-        int by = cellY + ob.y;
-        int bz = cellZ + ob.z;
+        int bx = volumeX + ob.x;
+        int by = volumeY + ob.y;
+        int bz = volumeZ + ob.z;
 
         if (va == 0.0f) return WriteGridVertex(writer, ax, ay, az, col);
         if (vb == 0.0f) return WriteGridVertex(writer, bx, by, bz, col);
@@ -684,9 +684,9 @@ public class MC33PrepareCS
         }
     }
 
-    private Mesh calc_isosurface(float iso, float[] cells)
+    private Mesh calc_isosurface(float iso, float[] volumes)
     {
-        _F = cells;
+        _Volumes = volumes;
 
         int nx = _MCn.x;
         int ny = _MCn.y;
@@ -708,19 +708,19 @@ public class MC33PrepareCS
             {
                 for (int x = 0; x < nx; x++)
                 {
-                    float V00 = GetCellValue(x, y, z);
-                    float V01 = GetCellValue(x, y + 1, z);
-                    float V10 = GetCellValue(x, y, z + 1);
-                    float V11 = GetCellValue(x, y + 1, z + 1);
+                    float V00 = GetVolumeValue(x, y, z);
+                    float V01 = GetVolumeValue(x, y + 1, z);
+                    float V10 = GetVolumeValue(x, y, z + 1);
+                    float V11 = GetVolumeValue(x, y + 1, z + 1);
                     V[0] = iso - V00;
                     V[1] = iso - V01;
                     V[2] = iso - V11;
                     V[3] = iso - V10;
 
-                    V00 = GetCellValue(x + 1, y, z);
-                    V01 = GetCellValue(x + 1, y + 1, z);
-                    V10 = GetCellValue(x + 1, y, z + 1);
-                    V11 = GetCellValue(x + 1, y + 1, z + 1);
+                    V00 = GetVolumeValue(x + 1, y, z);
+                    V01 = GetVolumeValue(x + 1, y + 1, z);
+                    V10 = GetVolumeValue(x + 1, y, z + 1);
+                    V11 = GetVolumeValue(x + 1, y + 1, z + 1);
                     V[4] = iso - V00;
                     V[5] = iso - V01;
                     V[6] = iso - V11;
@@ -758,12 +758,12 @@ public class MC33PrepareCS
         return mesh;
     }
 
-    public Mesh calculate_isosurface(MC33Grid grd, float iso, float[] cells)
+    public Mesh calculate_isosurface(MC33Grid grd, float iso, float[] volumes)
     {
         init_temp_isosurface(grd);
-        PrecalcGradients(cells);
+        PrecalcGradients(volumes);
 
-        var mesh = calc_isosurface(iso, cells);
+        var mesh = calc_isosurface(iso, volumes);
 
         if (_gradients.IsCreated)
         {

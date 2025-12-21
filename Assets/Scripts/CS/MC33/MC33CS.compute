@@ -6,7 +6,7 @@
 #include "MC33CS.hlsl"
 #include "MC33LookUpTable.hlsl"
 
-StructuredBuffer<float> _Cells;                 // (Nx+1)*(Ny+1)*(Nz+1)
+StructuredBuffer<float> _Volumes;                 // (Nx+1)*(Ny+1)*(Nz+1)
 RWStructuredBuffer<float3> _Gradients;          // 同サイズ
 AppendStructuredBuffer<MCVertex> _Vertices;     // 3頂点=1三角形（MeshTopology.Triangles）
 RWStructuredBuffer<uint> _IndirectArgs;         // uint[4] (vertexCountPerInstance, instanceCount, startVertex, startInstance)
@@ -28,7 +28,7 @@ uint GridIndex(int x, int y, int z)
 
 float Sample(int x, int y, int z)
 {
-    return _Cells[GridIndex(x, y, z)];
+    return _Volumes[GridIndex(x, y, z)];
 }
 
 float3 GridToWorld(float3 g)
@@ -73,6 +73,15 @@ void AppendPackedPos(float4 packedPos)
 {
     MCVertex v;
     v.position = packedPos;
+    _Vertices.Append(v);
+}
+
+void AppendVertex(float3 position, float3 normal, float3 color)
+{
+    MCVertex v;
+    v.position = float4(position, 1);
+    v.normal = float4(normal,1);
+    v.color = float4(color,1);
     _Vertices.Append(v);
 }
 
@@ -527,9 +536,22 @@ void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
         bool flip = (m == 0);
 #endif
         
+#if 0        
         //  EmitTriangleに正しいデータが渡っていればバグらない事が判明した
         if (flip) EmitTriangle(packedPos[e2], packedPos[e1], packedPos[e0]);
         else      EmitTriangle(packedPos[e0], packedPos[e1], packedPos[e2]);
+#else        
+        float3 p0 = float3(0, 0, 0);
+        float3 p1 = float3( + 1, 0, 0);
+        float3 p2 = float3(0, 0 + 1, 0);
+        // float3 p0 = float3(x, y, z);
+        // float3 p1 = float3(x + 1, y, z);
+        // float3 p2 = float3(x, y + 1, z);
+        AppendVertex(p0, float3(0,0,1), float3(1,0,0));
+        AppendVertex(p1, float3(0,0,1), float3(0,1,0));
+        AppendVertex(p2, float3(0,0,1), float3(0,0,1));
+        
+#endif
     }
 }
 

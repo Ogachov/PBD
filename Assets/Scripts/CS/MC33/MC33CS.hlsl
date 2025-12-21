@@ -1,9 +1,14 @@
 #if !defined(MC33CS_HLSL)
 #define MC33CS_HLSL
+
+// #define USE_OCT_ENCODED_NORMAL
+
 struct MCVertex
 {
     // xyz:position, w:octahederal encoded normal(R16G16)
     float4 position;
+    float4 normal;
+    float4 color;
 };
 
 // float4のカラーをRGBA8のuintにパック/アンパックする関数

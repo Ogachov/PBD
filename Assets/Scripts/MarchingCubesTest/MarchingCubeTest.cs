@@ -25,7 +25,7 @@ public class MarchingCubeTest : MonoBehaviour
     [SerializeField] private Material material;
     [SerializeField] private Vector3 boundsPadding = new Vector3(2f, 2f, 2f);
 
-    private GraphicsBuffer _cellBuffer;
+    private GraphicsBuffer _volumeBuffer;
     private GraphicsBuffer _gradientBuffer;
     private GraphicsBuffer _vertexBuffer;
     private GraphicsBuffer _indirectArgsBuffer;
@@ -39,7 +39,7 @@ public class MarchingCubeTest : MonoBehaviour
     private Vector3 _lastGridSize;
     private float _lastSphereRadius;
 
-    private float[] _cells;
+    private float[] _volumes;
     private List<GameObject> _cubes = new List<GameObject>();
 
     private MC33 _mc33 = new MC33();
@@ -48,7 +48,7 @@ public class MarchingCubeTest : MonoBehaviour
     private MC33PrepareCS _mc33PrepareCS = new MC33PrepareCS();
 
     private int3 _gridN; // 各次元ごとのグリッド数
-    private int3 _cellN; // 各次元ごとのセル数（グリッドを描画するための周囲の情報数なのでグリッド＋１の大きさになる）
+    private int3 _volumeN; // 各次元ごとのセル数（グリッドを描画するための周囲の情報数なのでグリッド＋１の大きさになる）
 
     private MeshFilter _meshFilter;
 
@@ -63,26 +63,27 @@ public class MarchingCubeTest : MonoBehaviour
     
     private void InitComputeShaderBuffers()
     {
-        _cellBuffer?.Release();
+        _volumeBuffer?.Release();
         _gradientBuffer?.Release();
         _vertexBuffer?.Release();
         _indirectArgsBuffer?.Release();
 
-        _cellBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _cells.Length, sizeof(float));
+        _volumeBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _volumes.Length, sizeof(float));
 
-        _gradientBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _cells.Length, sizeof(float) * 3);
+        _gradientBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _volumes.Length, sizeof(float) * 3);
 
         var vertexCount = maxTriangles * 3;
-        _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, vertexCount, sizeof(float) * 4);
+        // _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, vertexCount, sizeof(float) * 4);
+        _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, vertexCount, sizeof(float) * 4 * 3);   //pos,nrm,col
 
         // Indirect args: uint4 = (vertexCountPerInstance, instanceCount, startVertex, startInstance)
         _indirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, 1, sizeof(uint) * 4);
         _indirectArgsBuffer.SetData(new[] { 0, 1, 0, 0 });
 
-        computeShader.SetBuffer(k_BuildGradients, "_Cells", _cellBuffer);
+        computeShader.SetBuffer(k_BuildGradients, "_Volumes", _volumeBuffer);
         computeShader.SetBuffer(k_BuildGradients, "_Gradients", _gradientBuffer);
         
-        computeShader.SetBuffer(k_BuildIsoSurface, "_Cells", _cellBuffer);
+        computeShader.SetBuffer(k_BuildIsoSurface, "_Volumes", _volumeBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_Gradients", _gradientBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_Vertices", _vertexBuffer);
         
@@ -116,7 +117,7 @@ public class MarchingCubeTest : MonoBehaviour
         _indirectArgsBuffer.GetData(countArray);
         Debug.Log(countArray[0] + " vertices generated.");
         
-        var n = Mathf.Min(4, countArray[0]);
+        var n = Mathf.Min(8, countArray[0]);
         var tmp = new Vector3[n];
         _gradientBuffer.GetData(tmp, 0, 0, n);
         for (var i = 0; i < n; i++)
@@ -134,7 +135,7 @@ public class MarchingCubeTest : MonoBehaviour
 
     private void OnDestroy()
     {
-        _cellBuffer?.Release();
+        _volumeBuffer?.Release();
         _gradientBuffer?.Release();
         _vertexBuffer?.Release();
         _indirectArgsBuffer?.Release();
@@ -146,7 +147,7 @@ public class MarchingCubeTest : MonoBehaviour
             !Mathf.Approximately(noiseScale, _lastNoiseScale) || gridSize != _lastGridSize ||
             !Mathf.Approximately(_lastSphereRadius, sphereRadius))
         {
-            MakeCells();
+            MakeVolumes();
             if (drawCubes)
             {
                 DrawCubes();
@@ -156,16 +157,16 @@ public class MarchingCubeTest : MonoBehaviour
         // 前回とパラメータが異なっていたらバッファを初期化
         if (UseComputeShader)
         {
-            if (_cellBuffer == null || !Mathf.Approximately(isoLevel, _lastIsoLevel) || noiseOffset != _lastNoiseOffset ||
+            if (_volumeBuffer == null || !Mathf.Approximately(isoLevel, _lastIsoLevel) || noiseOffset != _lastNoiseOffset ||
                 !Mathf.Approximately(noiseScale, _lastNoiseScale) || gridSize != _lastGridSize ||
                 !Mathf.Approximately(_lastSphereRadius, sphereRadius))
             {
                 InitComputeShaderBuffers();
             }
 
-            if (_cellBuffer != null)
+            if (_volumeBuffer != null)
             {
-                _cellBuffer.SetData(_cells);
+                _volumeBuffer.SetData(_volumes);
             }
         }
         
@@ -207,69 +208,69 @@ public class MarchingCubeTest : MonoBehaviour
         }
         else if (prepareComputeShader)
         {
-            var mesh = _mc33PrepareCS.calculate_isosurface(grid, isoLevel, _cells);
+            var mesh = _mc33PrepareCS.calculate_isosurface(grid, isoLevel, _volumes);
             mesh.name = "MC33_isosurface";
             _meshFilter.mesh = mesh;
         }
         else
         {
-            var mesh = _mc33.calculate_isosurface(grid, isoLevel, _cells);
+            var mesh = _mc33.calculate_isosurface(grid, isoLevel, _volumes);
             mesh.name = "MC33_isosurface";
             _meshFilter.mesh = mesh;
         }
     }
 
 
-    private void MakeCells()
+    private void MakeVolumes()
     {
         var gridSizeX = Mathf.FloorToInt(Mathf.Max(gridSize.x, 2));
         var gridSizeY = Mathf.FloorToInt(Mathf.Max(gridSize.y, 2));
         var gridSizeZ = Mathf.FloorToInt(Mathf.Max(gridSize.z, 2));
         _gridN = new int3(gridSizeX, gridSizeY, gridSizeZ);
-        _cellN = _gridN + new int3(1, 1, 1);
-        _cells = new float[_cellN.x * _cellN.y * _cellN.z];
+        _volumeN = _gridN + new int3(1, 1, 1);
+        _volumes = new float[_volumeN.x * _volumeN.y * _volumeN.z];
 
-        var positionCenter = new Vector3(_cellN.x * 0.5f, _cellN.y * 0.5f, _cellN.z * 0.5f);
+        var positionCenter = new Vector3(_volumeN.x * 0.5f, _volumeN.y * 0.5f, _volumeN.z * 0.5f);
 
         if (UseNoise)
         {
-            for (var z = 0; z < _cellN.z; z++)
+            for (var z = 0; z < _volumeN.z; z++)
             {
-                for (var y = 0; y < _cellN.y; y++)
+                for (var y = 0; y < _volumeN.y; y++)
                 {
-                    for (var x = 0; x < _cellN.x; x++)
+                    for (var x = 0; x < _volumeN.x; x++)
                     {
-                        if (x == 0 || x == _cellN.x - 1 || y == 0 || y == _cellN.y - 1 || z == 0 || z == _cellN.z - 1)
+                        if (x == 0 || x == _volumeN.x - 1 || y == 0 || y == _volumeN.y - 1 || z == 0 || z == _volumeN.z - 1)
                         {
-                            _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = 0.0f;
+                            _volumes[x + y * _volumeN.x + z * _volumeN.x * _volumeN.y] = 0.0f;
                             continue;
                         }
 
                         var position = new Vector3(x, y, z);
                         position = (position - positionCenter) * noiseScale + noiseOffset;
                         var value = Perlin.Noise(position.x, position.y, position.z);
-                        _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = value;
+                        _volumes[x + y * _volumeN.x + z * _volumeN.x * _volumeN.y] = value;
                     }
                 }
             }
         }
         else if (UseSphere)
         {
-            for (var z = 0; z < _cellN.z; z++)
+            for (var z = 0; z < _volumeN.z; z++)
             {
-                for (var y = 0; y < _cellN.y; y++)
+                for (var y = 0; y < _volumeN.y; y++)
                 {
-                    for (var x = 0; x < _cellN.x; x++)
+                    for (var x = 0; x < _volumeN.x; x++)
                     {
-                        if (x == 0 || x == _cellN.x - 1 || y == 0 || y == _cellN.y - 1 || z == 0 || z == _cellN.z - 1)
+                        if (x == 0 || x == _volumeN.x - 1 || y == 0 || y == _volumeN.y - 1 || z == 0 || z == _volumeN.z - 1)
                         {
-                            _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = 0.0f;
+                            _volumes[x + y * _volumeN.x + z * _volumeN.x * _volumeN.y] = 0.0f;
                             continue;
                         }
 
-                        var position = new Vector3(x - _cellN.x * 0.5f, y - _cellN.y * 0.5f, z - _cellN.z * 0.5f);
+                        var position = new Vector3(x - _volumeN.x * 0.5f, y - _volumeN.y * 0.5f, z - _volumeN.z * 0.5f);
                         var distance = position.magnitude;
-                        _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] =
+                        _volumes[x + y * _volumeN.x + z * _volumeN.x * _volumeN.y] =
                             distance < sphereRadius ? 1.0f - distance / sphereRadius : 0.0f;
                     }
                 }
@@ -278,22 +279,22 @@ public class MarchingCubeTest : MonoBehaviour
         else
         {
             int3 min, max;
-            min = (_cellN - (int)sphereRadius) / 2;
-            max = (_cellN + (int)sphereRadius) / 2;
+            min = (_volumeN - (int)sphereRadius) / 2;
+            max = (_volumeN + (int)sphereRadius) / 2;
 
-            for (var z = 0; z < _cellN.z; z++)
+            for (var z = 0; z < _volumeN.z; z++)
             {
-                for (var y = 0; y < _cellN.y; y++)
+                for (var y = 0; y < _volumeN.y; y++)
                 {
-                    for (var x = 0; x < _cellN.x; x++)
+                    for (var x = 0; x < _volumeN.x; x++)
                     {
-                        if (x == 0 || x == _cellN.x - 1 || y == 0 || y == _cellN.y - 1 || z == 0 || z == _cellN.z - 1)
+                        if (x == 0 || x == _volumeN.x - 1 || y == 0 || y == _volumeN.y - 1 || z == 0 || z == _volumeN.z - 1)
                         {
-                            _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] = 0.0f;
+                            _volumes[x + y * _volumeN.x + z * _volumeN.x * _volumeN.y] = 0.0f;
                             continue;
                         }
 
-                        _cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] =
+                        _volumes[x + y * _volumeN.x + z * _volumeN.x * _volumeN.y] =
                             (x >= min.x && x < max.x && y >= min.y && y < max.y && z >= min.z && z < max.z)
                                 ? 1.0f
                                 : 0.0f;
@@ -310,15 +311,15 @@ public class MarchingCubeTest : MonoBehaviour
             Destroy(cube);
         }
 
-        var positionRoot = new Vector3(_cellN.x * -0.5f + 0.5f, 0f, _cellN.z * -0.5f + 0.5f);
+        var positionRoot = new Vector3(_volumeN.x * -0.5f + 0.5f, 0f, _volumeN.z * -0.5f + 0.5f);
 
-        for (var z = 0; z < _cellN.z; z++)
+        for (var z = 0; z < _volumeN.z; z++)
         {
-            for (var y = 0; y < _cellN.y; y++)
+            for (var y = 0; y < _volumeN.y; y++)
             {
-                for (var x = 0; x < _cellN.x; x++)
+                for (var x = 0; x < _volumeN.x; x++)
                 {
-                    if (_cells[x + y * _cellN.x + z * _cellN.x * _cellN.y] > isoLevel)
+                    if (_volumes[x + y * _volumeN.x + z * _volumeN.x * _volumeN.y] > isoLevel)
                     {
                         var go = Instantiate(cubePrefab, new Vector3(x, y, z) + positionRoot, Quaternion.identity);
                         go.transform.parent = transform;
