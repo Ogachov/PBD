@@ -2,13 +2,18 @@ using UnityEngine;
 
 public class RenderPrimitivesIndexedIndirect : MonoBehaviour
 {
-    [SerializeField, Range(0, 1000)] private int primitiveCount = 100;
+    [SerializeField, Range(0, 1000)] private int primitiveBufferCount = 1000;
+    [SerializeField, Range(0, 1000)] private int drawCount = 1000;
     [SerializeField] private Material material;
+    [SerializeField] private ComputeShader computeShader;
     
     private GraphicsBuffer _vertexBuffer;
     private GraphicsBuffer _indexBuffer;
     private GraphicsBuffer _indirectArgsBuffer;
     private GraphicsBuffer.IndirectDrawIndexedArgs[] commandData;
+    
+    private int k_Init;
+    private int k_Draw;
     
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
@@ -20,9 +25,9 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
         }
         // 頂点バッファの作成 primitiveCount個の三角形を定義
         // 各頂点は float4 position, float4 normal, float4 color の形式
-        _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, primitiveCount * 3, sizeof(float) * 12);
-        Vector4[] vertexData = new Vector4[primitiveCount * 3 * 3]; // 3頂点 * (position + normal + color)
-        for (int i = 0; i < primitiveCount; i++)
+        _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, primitiveBufferCount * 3, sizeof(float) * 12);
+        Vector4[] vertexData = new Vector4[primitiveBufferCount * 3 * 3]; // 3頂点 * (position + normal + color)
+        for (int i = 0; i < primitiveBufferCount; i++)
         {
             // 三角形の頂点位置をランダムに生成
             Vector3 p0 = Random.insideUnitSphere;
@@ -45,9 +50,9 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
         }
         _vertexBuffer.SetData(vertexData);
         // インデックスバッファの作成
-        _indexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Index, primitiveCount * 3, sizeof(int));
-        int[] indexData = new int[primitiveCount * 3];
-        for (int i = 0; i < primitiveCount; i++)
+        _indexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Index, primitiveBufferCount * 3, sizeof(int));
+        int[] indexData = new int[primitiveBufferCount * 3];
+        for (int i = 0; i < primitiveBufferCount; i++)
         {
             indexData[i * 3 + 0] = i * 3 + 0;
             indexData[i * 3 + 1] = i * 3 + 1;
@@ -55,12 +60,30 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
         }
         _indexBuffer.SetData(indexData);
         // 間接描画用の引数バッファの作成
-        _indirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, 1, GraphicsBuffer.IndirectDrawIndexedArgs.size);
+        _indirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.Structured, 1, GraphicsBuffer.IndirectDrawIndexedArgs.size);
         commandData = new GraphicsBuffer.IndirectDrawIndexedArgs[1];
+        commandData[0] = new GraphicsBuffer.IndirectDrawIndexedArgs();
+        commandData[0].indexCountPerInstance = (uint)primitiveBufferCount * 3; // 1つのインスタンスあたりのインデックス数
+        commandData[0].instanceCount = 1; // インスタンス数
+        commandData[0].startIndex = 0; // 開始インデックスの位置
+        commandData[0].baseVertexIndex = 0; // ベース頂点位置
+        commandData[0].startInstance = 0; // 開始インスタンス位置
+        _indirectArgsBuffer.SetData(commandData);
+        
         // マテリアルにバッファをセット
-        // material.SetBuffer("_VertexBuffer", _vertexBuffer);
-        // material.SetBuffer("_IndexBuffer", _indexBuffer);
-        // material.SetBuffer("_IndirectArgsBuffer", _indirectArgsBuffer);
+        material.SetBuffer("_Vertices", _vertexBuffer);
+        material.SetBuffer("_Triangles", _indexBuffer);
+
+        k_Init = computeShader.FindKernel("Init");
+        k_Draw = computeShader.FindKernel("Draw");
+        computeShader.SetBuffer(k_Init, "_DrawArgs", _indirectArgsBuffer);
+        
+        computeShader.SetBuffer(k_Draw, "_Vertices", _vertexBuffer);
+        computeShader.SetBuffer(k_Draw, "_Indices", _indexBuffer);
+        computeShader.SetBuffer(k_Draw, "_DrawArgs", _indirectArgsBuffer);
+        
+        computeShader.SetInt("_VerticesCapacity", primitiveBufferCount * 3);
+        computeShader.SetInt("_IndicesCapacity", primitiveBufferCount * 3);
     }
     
     private void OnDestroy()
@@ -74,6 +97,12 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
+        computeShader.Dispatch(k_Init, 1, 1, 1);
+        
+        computeShader.SetInt("_NumDraw", drawCount);
+        
+        computeShader.Dispatch(k_Draw, 2, 2, 2);
+        
         if (material == null) return;
         // RenderPrimitivesIndexedIndirectを使って間接描画の実行
 
@@ -82,17 +111,6 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
         rp.worldBounds = new Bounds(Vector3.zero, Vector3.one * 1000f);
 
         rp.matProps = new MaterialPropertyBlock();
-        rp.matProps.SetBuffer("_Vertices", _vertexBuffer);
-        rp.matProps.SetBuffer("_Triangles", _indexBuffer);
-        // rp.matProps.SetMatrix("_ObjectToWorld", transform.localToWorldMatrix);
-
-        commandData[0] = new GraphicsBuffer.IndirectDrawIndexedArgs();
-        commandData[0].indexCountPerInstance = (uint)primitiveCount * 3; // 1つのインスタンスあたりのインデックス数
-        commandData[0].instanceCount = 1; // インスタンス数
-        commandData[0].startIndex = 0; // 開始インデックスの位置
-        commandData[0].baseVertexIndex = 0; // ベース頂点位置
-        commandData[0].startInstance = 0; // 開始インスタンス位置
-        _indirectArgsBuffer.SetData(commandData);
         
         Graphics.RenderPrimitivesIndexedIndirect(
             rp,

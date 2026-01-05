@@ -1112,8 +1112,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1649ee4f040c9a449b7df191f25083c6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  primitiveCount: 100
+  primitiveBufferCount: 1000
+  drawCount: 1000
   material: {fileID: 2100000, guid: da0d688c1e99e1d4b8ae1b18d67afcfa, type: 2}
+  computeShader: {fileID: 7200000, guid: e8e84da7b58bf7a4fa7e4e9f60f30e9a, type: 3}
 --- !u!4 &1288776179
 Transform:
   m_ObjectHideFlags: 0

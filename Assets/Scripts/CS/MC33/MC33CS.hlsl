@@ -1,6 +1,18 @@
 #if !defined(MC33CS_HLSL)
 #define MC33CS_HLSL
 
+// #if !defined(IndirectDrawIndexedArgs)
+// struct IndirectDrawIndexedArgs
+// {
+//     uint IndexCountPerInstance;
+//     uint InstanceCount;
+//     uint StartIndex;
+//     uint BaseVertexIndex;
+//     uint StartInstance;
+// };
+// #endif
+
+
 // #define USE_OCT_ENCODED_NORMAL
 
 struct MCVertex

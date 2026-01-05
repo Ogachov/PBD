@@ -1,0 +1,73 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel Init
+#pragma kernel Draw
+
+#include "../MC33/MC33CS.hlsl"
+#include "UnityIndirect.cginc"
+
+RWStructuredBuffer<MCVertex> _Vertices;
+RWStructuredBuffer<uint> _Indices;
+RWStructuredBuffer<IndirectDrawIndexedArgs> _DrawArgs;
+
+cbuffer CBuffer
+{
+    uint _VerticesCapacity;
+    uint _IndicesCapacity;
+    uint _NumDraw;
+};
+
+[numthreads(1,1,1)]
+void Init(uint3 id : SV_DispatchThreadID)
+{
+    IndirectDrawIndexedArgs args;
+    args.indexCountPerInstance = 0;
+    args.instanceCount = 1;
+    args.startIndex = 0;
+    args.baseVertexIndex = 0;
+    args.startInstance = 0;
+    _DrawArgs[0] = args;
+}
+
+[numthreads(8,8,8)]
+void Draw(uint3 id : SV_DispatchThreadID)
+{
+    uint prev;
+    InterlockedAdd(_DrawArgs[0].indexCountPerInstance, 3, prev);
+    if (prev >= _IndicesCapacity)
+    {
+        return;
+    }
+    if (prev / 3 >= _NumDraw)
+    {
+        return;
+    }
+
+    uint baseIndex = prev;
+    
+    float3 basePos = float3(id.x, id.y, id.z);
+    float4 color = float4(0.0f, 0.0f, 1.0f, 1.0f);
+    
+    float3 v0, v1, v2;
+    v0 = basePos + float3(0.0f, 0.0f, 0.0f);
+    v1 = basePos + float3(1.0f, 0.0f, 0.0f);
+    v2 = basePos + float3(1.0f, 1.0f, 0.0f);
+    float3 normal = normalize(cross(v1 - v0, v2 - v0));
+
+    MCVertex vertex;
+    vertex.position = float4(v0, 1.0f);
+    vertex.normal = float4(normal, 0.0f);
+    vertex.color = color;
+    _Vertices[baseIndex + 0] = vertex;
+    vertex.position = float4(v1, 1.0f);
+    vertex.normal = float4(normal, 0.0f);
+    vertex.color = color;
+    _Vertices[baseIndex + 1] = vertex;
+    vertex.position = float4(v2, 1.0f);
+    vertex.normal = float4(normal, 0.0f);
+    vertex.color = color;
+    _Vertices[baseIndex + 2] = vertex;
+    
+    _Indices[baseIndex + 0] = baseIndex + 0;
+    _Indices[baseIndex + 1] = baseIndex + 1;
+    _Indices[baseIndex + 2] = baseIndex + 2;
+}
