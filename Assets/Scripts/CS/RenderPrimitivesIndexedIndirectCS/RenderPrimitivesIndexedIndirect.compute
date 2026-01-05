@@ -1,6 +1,7 @@
 // Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel Init
 #pragma kernel Draw
+#pragma kernel SetDrawArgs
 
 #include "../MC33/MC33CS.hlsl"
 #include "UnityIndirect.cginc"
@@ -8,6 +9,7 @@
 RWStructuredBuffer<MCVertex> _Vertices;
 RWStructuredBuffer<uint> _Indices;
 RWStructuredBuffer<IndirectDrawIndexedArgs> _DrawArgs;
+RWStructuredBuffer<uint> _IndexCounter;
 
 cbuffer CBuffer
 {
@@ -26,6 +28,8 @@ void Init(uint3 id : SV_DispatchThreadID)
     args.baseVertexIndex = 0;
     args.startInstance = 0;
     _DrawArgs[0] = args;
+    
+    _IndexCounter[0] = 0;
 }
 
 [numthreads(8,8,8)]
@@ -45,7 +49,7 @@ void Draw(uint3 id : SV_DispatchThreadID)
     uint baseIndex = prev;
     
     float3 basePos = float3(id.x, id.y, id.z);
-    float4 color = float4(0.0f, 0.0f, 1.0f, 1.0f);
+    float4 color = float4(id.x / 8.0, id.y / 8.0, id.z / 8.0, 1.0f);
     
     float3 v0, v1, v2;
     v0 = basePos + float3(0.0f, 0.0f, 0.0f);
@@ -70,4 +74,18 @@ void Draw(uint3 id : SV_DispatchThreadID)
     _Indices[baseIndex + 0] = baseIndex + 0;
     _Indices[baseIndex + 1] = baseIndex + 1;
     _Indices[baseIndex + 2] = baseIndex + 2;
+    
+    InterlockedAdd(_IndexCounter[0], 3, prev);
+}
+
+[numthreads(1,1,1)]
+void SetDrawArgs(uint3 id : SV_DispatchThreadID)
+{
+    IndirectDrawIndexedArgs args;
+    args.indexCountPerInstance = _IndexCounter[0];
+    args.instanceCount = 1;
+    args.startIndex = 0;
+    args.baseVertexIndex = 0;
+    args.startInstance = 0;
+    _DrawArgs[0] = args;
 }

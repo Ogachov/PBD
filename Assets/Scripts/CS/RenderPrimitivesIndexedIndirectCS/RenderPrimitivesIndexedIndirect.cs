@@ -11,9 +11,11 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
     private GraphicsBuffer _indexBuffer;
     private GraphicsBuffer _indirectArgsBuffer;
     private GraphicsBuffer.IndirectDrawIndexedArgs[] commandData;
+    private GraphicsBuffer _indexCounterBuffer;
     
     private int k_Init;
     private int k_Draw;
+    private int k_SetDrawArgs;
     
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start()
@@ -70,17 +72,25 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
         commandData[0].startInstance = 0; // 開始インスタンス位置
         _indirectArgsBuffer.SetData(commandData);
         
+        _indexCounterBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 1, sizeof(uint));
+        
         // マテリアルにバッファをセット
         material.SetBuffer("_Vertices", _vertexBuffer);
         material.SetBuffer("_Triangles", _indexBuffer);
 
         k_Init = computeShader.FindKernel("Init");
         k_Draw = computeShader.FindKernel("Draw");
+        k_SetDrawArgs = computeShader.FindKernel("SetDrawArgs");
         computeShader.SetBuffer(k_Init, "_DrawArgs", _indirectArgsBuffer);
+        computeShader.SetBuffer(k_Init, "_IndexCounter", _indexCounterBuffer);
         
         computeShader.SetBuffer(k_Draw, "_Vertices", _vertexBuffer);
         computeShader.SetBuffer(k_Draw, "_Indices", _indexBuffer);
         computeShader.SetBuffer(k_Draw, "_DrawArgs", _indirectArgsBuffer);
+        computeShader.SetBuffer(k_Draw, "_IndexCounter", _indexCounterBuffer);
+        
+        computeShader.SetBuffer(k_SetDrawArgs, "_DrawArgs", _indirectArgsBuffer);
+        computeShader.SetBuffer(k_SetDrawArgs, "_IndexCounter", _indexCounterBuffer);
         
         computeShader.SetInt("_VerticesCapacity", primitiveBufferCount * 3);
         computeShader.SetInt("_IndicesCapacity", primitiveBufferCount * 3);
@@ -101,7 +111,9 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
         
         computeShader.SetInt("_NumDraw", drawCount);
         
-        computeShader.Dispatch(k_Draw, 2, 2, 2);
+        computeShader.Dispatch(k_Draw, 1, 1, 1);
+        
+        computeShader.Dispatch(k_SetDrawArgs, 1, 1, 1);
         
         if (material == null) return;
         // RenderPrimitivesIndexedIndirectを使って間接描画の実行
