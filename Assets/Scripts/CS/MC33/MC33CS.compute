@@ -2,14 +2,14 @@
 #pragma kernel BuildGradients
 #pragma kernel BuildIsoSurface
 #pragma kernel InitIndirectArgs
+#pragma kernel SetIndirectArgs
 
-#include "MC33CS.hlsl"
+#include "UnityIndirect.cginc"
+#include "CSDraw.hlsl"
 #include "MC33LookUpTable.hlsl"
 
 StructuredBuffer<float> _Volumes;                 // (Nx+1)*(Ny+1)*(Nz+1)
 RWStructuredBuffer<float3> _Gradients;          // 同サイズ
-AppendStructuredBuffer<MCVertex> _Vertices;     // 3頂点=1三角形（MeshTopology.Triangles）
-RWStructuredBuffer<uint> _IndirectArgs;         // uint[4] (vertexCountPerInstance, instanceCount, startVertex, startInstance)
 
 cbuffer Params
 {
@@ -17,6 +17,8 @@ cbuffer Params
     float3 _Origin;     // r0
     float3 _Step;       // d
     float  _Iso;
+    
+    uint _VerticesCapacity;
 }
 
 uint GridIndex(int x, int y, int z)
@@ -67,22 +69,6 @@ MCVertex MakeVertex(float3 gridPos, float3 normal)
     uint packed = PackOct16(normalize(normal));
     v.position = float4(GridToWorld(gridPos), asfloat(packed)); // w に oct16 を押し込み
     return v;
-}
-
-void AppendPackedPos(float4 packedPos)
-{
-    MCVertex v;
-    v.position = packedPos;
-    _Vertices.Append(v);
-}
-
-void AppendVertex(float3 position, float3 normal, float3 color)
-{
-    MCVertex v;
-    v.position = float4(position, 1);
-    v.normal = float4(normal,1);
-    v.color = float4(color,1);
-    _Vertices.Append(v);
 }
 
 static const int3 s_cornerOffset[8] =
@@ -177,7 +163,7 @@ int InteriorTest(int i, int flagtplane, float v[8])
 }
 
 // エッジ頂点生成（セル内キャッシュ：packedPos[edge]=float4(worldPos, asfloat(oct16))）
-bool EnsureEdgeVertex(int cellX, int cellY, int cellZ, int edgeId, float v[8], inout bool has[13], inout float4 packedPos[13])
+bool EnsureEdgeVertex(int cellX, int cellY, int cellZ, int edgeId, float v[8], inout bool has[13], inout float4 mcv[13])
 {
     if (has[edgeId]) return true;
 
@@ -199,15 +185,13 @@ bool EnsureEdgeVertex(int cellX, int cellY, int cellZ, int edgeId, float v[8], i
 
     if (abs(va) < epsZero)
     {
-        MCVertex vv = MakeVertex(float3(ax, ay, az), GradientAt(ax, ay, az));
-        packedPos[edgeId] = vv.position;
+        mcv[edgeId] = PackVertexNormal(float3(ax,ay,az),GradientAt(ax, ay, az));
         has[edgeId] = true;
         return true;
     }
     if (abs(vb) < epsZero)
     {
-        MCVertex vv = MakeVertex(float3(bx, by, bz), GradientAt(bx, by, bz));
-        packedPos[edgeId] = vv.position;
+        mcv[edgeId] = PackVertexNormal(float3(bx,by,bz),GradientAt(bx, by, bz));
         has[edgeId] = true;
         return true;
     }
@@ -232,13 +216,12 @@ bool EnsureEdgeVertex(int cellX, int cellY, int cellZ, int edgeId, float v[8], i
     if (any(!isfinite(p)) || any(!isfinite(n)))
         return false;
 
-    MCVertex vv = MakeVertex(p, n);
-    packedPos[edgeId] = vv.position;
+    mcv[edgeId] = PackVertexNormal(p.xyz,n.xyz);
     has[edgeId] = true;
     return true;
 }
 
-bool EnsureCenterVertex(int cellX, int cellY, int cellZ, inout bool has[13], inout float4 packedPos[13])
+bool EnsureCenterVertex(int cellX, int cellY, int cellZ, inout bool has[13], inout float4 mcv[13])
 {
     const int edgeId = 12;
     if (has[edgeId]) return true;
@@ -259,17 +242,10 @@ bool EnsureCenterVertex(int cellX, int cellY, int cellZ, inout bool has[13], ino
     if (any(!isfinite(p)) || any(!isfinite(n)))
         return false;
 
-    MCVertex vv = MakeVertex(p, n);
-    packedPos[edgeId] = vv.position;
+    // MCVertex vv = MakeVertex(p, n);
+    mcv[edgeId] = PackVertexNormal(p,n);
     has[edgeId] = true;
     return true;
-}
-
-void EmitTriangle(float4 p0, float4 p1, float4 p2)
-{
-    AppendPackedPos(p0);
-    AppendPackedPos(p1);
-    AppendPackedPos(p2);
 }
 
 // Case判定＆出力（本体）
@@ -506,8 +482,8 @@ void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
     }
 
     bool has[13];
-    float4 packedPos[13];
-    [unroll] for (int i = 0; i < 13; i++) { has[i] = false; packedPos[i] = 0; }
+    float4 mcv[13];
+    [unroll] for (int i = 0; i < 13; i++) { has[i] = false; mcv[i] = 0; }
 
     int code = cubeIndex;
     while (code != 0)
@@ -518,14 +494,14 @@ void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
         int e1 = (code >>  4) & 0x0F;
         int e2 = (code >>  8) & 0x0F;
 
-        bool ok0 = (e0 == 12) ? EnsureCenterVertex(x, y, z, has, packedPos)
-                              : EnsureEdgeVertex(x, y, z, e0, v, has, packedPos);
+        bool ok0 = (e0 == 12) ? EnsureCenterVertex(x, y, z, has, mcv)
+                              : EnsureEdgeVertex(x, y, z, e0, v, has, mcv);
 
-        bool ok1 = (e1 == 12) ? EnsureCenterVertex(x, y, z, has, packedPos)
-                              : EnsureEdgeVertex(x, y, z, e1, v, has, packedPos);
+        bool ok1 = (e1 == 12) ? EnsureCenterVertex(x, y, z, has, mcv)
+                              : EnsureEdgeVertex(x, y, z, e1, v, has, mcv);
 
-        bool ok2 = (e2 == 12) ? EnsureCenterVertex(x, y, z, has, packedPos)
-                              : EnsureEdgeVertex(x, y, z, e2, v, has, packedPos);
+        bool ok2 = (e2 == 12) ? EnsureCenterVertex(x, y, z, has, mcv)
+                              : EnsureEdgeVertex(x, y, z, e2, v, has, mcv);
 
         if (!(ok0 && ok1 && ok2))
             continue;
@@ -536,20 +512,18 @@ void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
         bool flip = (m == 0);
 #endif
         
-#if 0        
+#if 1
         //  EmitTriangleに正しいデータが渡っていればバグらない事が判明した
-        if (flip) EmitTriangle(packedPos[e2], packedPos[e1], packedPos[e0]);
-        else      EmitTriangle(packedPos[e0], packedPos[e1], packedPos[e2]);
+        if (flip) EmitTriangle(mcv[e2], mcv[e1], mcv[e0], _VerticesCapacity);
+        else      EmitTriangle(mcv[e0], mcv[e1], mcv[e2], _VerticesCapacity);
 #else        
-        float3 p0 = float3(0, 0, 0);
-        float3 p1 = float3( + 1, 0, 0);
-        float3 p2 = float3(0, 0 + 1, 0);
-        // float3 p0 = float3(x, y, z);
-        // float3 p1 = float3(x + 1, y, z);
-        // float3 p2 = float3(x, y + 1, z);
-        AppendVertex(p0, float3(0,0,1), float3(1,0,0));
-        AppendVertex(p1, float3(0,0,1), float3(0,1,0));
-        AppendVertex(p2, float3(0,0,1), float3(0,0,1));
+        // float3 p0 = float3(0, 0, 0);
+        // float3 p1 = float3( + 1, 0, 0);
+        // float3 p2 = float3(0, 0 + 1, 0);
+        float3 p0 = float3(x, y, z);
+        float3 p1 = float3(x + 1, y, z);
+        float3 p2 = float3(x, y + 1, z);
+        AppendTriangle(p0, p1, p2, float3(0,0,1), float3(1,0,0), _VerticesCapacity);
         
 #endif
     }
@@ -612,14 +586,4 @@ void BuildIsoSurface(uint3 id : SV_DispatchThreadID)
     if (idx == 0 || idx == 0xFF) return;
 
     FindCaseAndEmit(x, y, z, idx, v);
-}
-
-[numthreads(1,1,1)]
-void InitIndirectArgs(uint3 id : SV_DispatchThreadID)
-{
-    // vertexCountPerInstance は CopyCount で毎フレーム上書きする
-    _IndirectArgs[0] = 0;
-    _IndirectArgs[1] = 1; // instanceCount
-    _IndirectArgs[2] = 0; // startVertex
-    _IndirectArgs[3] = 0; // startInstance
 }

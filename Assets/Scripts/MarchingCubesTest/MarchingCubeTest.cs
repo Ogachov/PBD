@@ -29,9 +29,11 @@ public class MarchingCubeTest : MonoBehaviour
     private GraphicsBuffer _gradientBuffer;
     private GraphicsBuffer _vertexBuffer;
     private GraphicsBuffer _indirectArgsBuffer;
+    private GraphicsBuffer _indexCounterBuffer;
     private int k_BuildGradients;
     private int k_BuildIsoSurface;
     private int k_InitIndirectArgs;
+    private int k_SetIndirectArgs;
     
     private float _lastIsoLevel = -1.0f;
     private Vector3 _lastNoiseOffset = Vector3.zero;
@@ -59,6 +61,7 @@ public class MarchingCubeTest : MonoBehaviour
         k_BuildGradients = computeShader.FindKernel("BuildGradients");
         k_BuildIsoSurface = computeShader.FindKernel("BuildIsoSurface");
         k_InitIndirectArgs = computeShader.FindKernel("InitIndirectArgs");
+        k_SetIndirectArgs = computeShader.FindKernel("SetIndirectArgs");
     }
     
     private void InitComputeShaderBuffers()
@@ -67,18 +70,17 @@ public class MarchingCubeTest : MonoBehaviour
         _gradientBuffer?.Release();
         _vertexBuffer?.Release();
         _indirectArgsBuffer?.Release();
+        _indexCounterBuffer?.Release();
 
         _volumeBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _volumes.Length, sizeof(float));
 
         _gradientBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _volumes.Length, sizeof(float) * 3);
 
         var vertexCount = maxTriangles * 3;
-        // _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, vertexCount, sizeof(float) * 4);
-        _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, vertexCount, sizeof(float) * 4 * 3);   //pos,nrm,col
+        _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, vertexCount, sizeof(float) * 4 * 3);   //pos,nrm,col
 
-        // Indirect args: uint4 = (vertexCountPerInstance, instanceCount, startVertex, startInstance)
-        _indirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments, 1, sizeof(uint) * 4);
-        _indirectArgsBuffer.SetData(new[] { 0, 1, 0, 0 });
+        _indirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.Structured, 1, GraphicsBuffer.IndirectDrawArgs.size);
+        _indexCounterBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 1, sizeof(uint));
 
         computeShader.SetBuffer(k_BuildGradients, "_Volumes", _volumeBuffer);
         computeShader.SetBuffer(k_BuildGradients, "_Gradients", _gradientBuffer);
@@ -86,18 +88,27 @@ public class MarchingCubeTest : MonoBehaviour
         computeShader.SetBuffer(k_BuildIsoSurface, "_Volumes", _volumeBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_Gradients", _gradientBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_Vertices", _vertexBuffer);
+        computeShader.SetBuffer(k_BuildIsoSurface, "_IndirectArgs", _indirectArgsBuffer);
+        computeShader.SetBuffer(k_BuildIsoSurface, "_IndexCounter", _indexCounterBuffer);
         
-        // 間接描画用の引数バッファを初期化
         computeShader.SetBuffer(k_InitIndirectArgs, "_IndirectArgs", _indirectArgsBuffer);
-        computeShader.Dispatch(k_InitIndirectArgs, 1, 1, 1);
+        computeShader.SetBuffer(k_InitIndirectArgs, "_IndexCounter", _indexCounterBuffer);
+        
+        computeShader.SetBuffer(k_SetIndirectArgs, "_IndirectArgs", _indirectArgsBuffer);
+        computeShader.SetBuffer(k_SetIndirectArgs, "_IndexCounter", _indexCounterBuffer);
+        
+        material.SetBuffer("_Vertices", _vertexBuffer);
     }
     
     private void KickComputeShader(MC33Grid grid, float isoLevel)
     {
+        computeShader.Dispatch(k_InitIndirectArgs, 1, 1, 1);
+        
         computeShader.SetInts("_N", grid.N.x, grid.N.y, grid.N.z);
         computeShader.SetFloats("_Origin", grid.r0.x, grid.r0.y, grid.r0.z);
         computeShader.SetFloats("_Step", grid.d.x, grid.d.y, grid.d.z);
         computeShader.SetFloat("_Iso", isoLevel);
+        computeShader.SetInt("_VerticesCapacity", maxTriangles * 3);
 
         var threadGroupsX = Mathf.CeilToInt((float)_gridN.x / 8);
         var threadGroupsY = Mathf.CeilToInt((float)_gridN.y / 8);
@@ -110,27 +121,30 @@ public class MarchingCubeTest : MonoBehaviour
         // 等値面計算
         computeShader.Dispatch(k_BuildIsoSurface, threadGroupsX, threadGroupsY, threadGroupsZ);
         
-        // AppendCounter(頂点数) → args[0] (vertexCountPerInstance) にコピー
-        GraphicsBuffer.CopyCount(_vertexBuffer, _indirectArgsBuffer, 0);
-
-        int[] countArray = {0, 0, 0, 0};
-        _indirectArgsBuffer.GetData(countArray);
-        Debug.Log(countArray[0] + " vertices generated.");
-        
-        var n = Mathf.Min(8, countArray[0]);
-        var tmp = new Vector3[n];
-        _gradientBuffer.GetData(tmp, 0, 0, n);
-        for (var i = 0; i < n; i++)
-        {
-            Debug.Log($"gradient {i}: {tmp[i]}");
-        }
+        computeShader.Dispatch(k_SetIndirectArgs, 1, 1, 1);
+        // int[] countArray = {0, 0, 0, 0};
+        // _indirectArgsBuffer.GetData(countArray);
+        // Debug.Log(countArray[0] + " vertices generated.");
+        //
+        // var n = Mathf.Min(8, countArray[0]);
+        // var tmp = new Vector3[n];
+        // _gradientBuffer.GetData(tmp, 0, 0, n);
+        // for (var i = 0; i < n; i++)
+        // {
+        //     Debug.Log($"gradient {i}: {tmp[i]}");
+        // }
         
         // _vertexBufferのカウントをCPU側で使えるようにする
         
-        if (material != null)
-        {
-            material.SetBuffer("_Vertices", _vertexBuffer);
-        }
+        // if (material != null)
+        // {
+        //     material.SetBuffer("_Vertices", _vertexBuffer);
+        // }
+        
+        // 計算後の_vertexBufferの内容を先頭から１００個程度コンソールに出力する
+        Vector4[] tmp = new Vector4[100 * 3 * 4];
+        _vertexBuffer.GetData(tmp);
+        
     }
 
     private void OnDestroy()
@@ -139,6 +153,7 @@ public class MarchingCubeTest : MonoBehaviour
         _gradientBuffer?.Release();
         _vertexBuffer?.Release();
         _indirectArgsBuffer?.Release();
+        _indexCounterBuffer?.Release();
     }
 
     private void Update()

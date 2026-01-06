@@ -14,13 +14,18 @@
 
 
 // #define USE_OCT_ENCODED_NORMAL
+#define USE_VERTEX_COLOR
 
 struct MCVertex
 {
     // xyz:position, w:octahederal encoded normal(R16G16)
     float4 position;
+#ifndef USE_OCT_ENCODED_NORMAL        
     float4 normal;
+#endif    
+#ifdef USE_VERTEX_COLOR    
     float4 color;
+#endif    
 };
 
 // float4のカラーをRGBA8のuintにパック/アンパックする関数
@@ -75,6 +80,16 @@ float3 UnpackOct16(uint p)
     uint2 u = uint2(p & 0xFFFFu, p >> 16);
     float2 e = (float2(u) / 65535.0) * 2.0 - 1.0;
     return OctDecode(e);
+}
+
+float4 PackVertexNormal(float3 v, float3 n)
+{
+    return float4(v, asfloat(PackOct16(n)));
+}
+
+float3 UnpackVertexNormal(float4 v)
+{
+    return UnpackOct16(asuint(v.w));
 }
 
 // encode sample
