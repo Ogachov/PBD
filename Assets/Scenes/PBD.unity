@@ -1114,7 +1114,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   primitiveBufferCount: 1000
   drawCount: 1000
-  material: {fileID: 2100000, guid: da0d688c1e99e1d4b8ae1b18d67afcfa, type: 2}
+  material: {fileID: 2100000, guid: e2f6f6fa69e5b4b4bbd84e356a422787, type: 2}
   computeShader: {fileID: 7200000, guid: e8e84da7b58bf7a4fa7e4e9f60f30e9a, type: 3}
 --- !u!4 &1288776179
 Transform:

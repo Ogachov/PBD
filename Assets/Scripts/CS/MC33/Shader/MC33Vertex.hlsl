@@ -10,8 +10,11 @@ StructuredBuffer<MCVertex> _Vertices; // xyz: position, w: packed normal
 
 void MC33Vertex_float(in uint vertexId, out float3 position, out float3 normal, out float4 color)
 {
+    InitIndirectDrawArgs(0); // single-draw なので 0 固定で OK
+    uint vid = GetIndirectVertexID_Base(vertexId);
+    
 #ifndef SHADERGRAPH_PREVIEW
-    MCVertex v = _Vertices[vertexId];
+    MCVertex v = _Vertices[vid];
 
     position = v.position.xyz;
 
