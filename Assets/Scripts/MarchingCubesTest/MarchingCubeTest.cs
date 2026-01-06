@@ -104,7 +104,7 @@ public class MarchingCubeTest : MonoBehaviour
     {
         computeShader.Dispatch(k_InitIndirectArgs, 1, 1, 1);
         
-        computeShader.SetInts("_N", grid.N.x, grid.N.y, grid.N.z);
+        computeShader.SetInts("_NumGrid", grid.N.x, grid.N.y, grid.N.z);
         computeShader.SetFloats("_Origin", grid.r0.x, grid.r0.y, grid.r0.z);
         computeShader.SetFloats("_Step", grid.d.x, grid.d.y, grid.d.z);
         computeShader.SetFloat("_Iso", isoLevel);
