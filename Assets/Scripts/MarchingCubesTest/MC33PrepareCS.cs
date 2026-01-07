@@ -627,14 +627,15 @@ public class MC33PrepareCS
         Span<int> p = stackalloc int[13];
         for (int pi = 0; pi < p.Length; pi++) p[pi] = -1;
 
-        while (cubeIndex != 0)
+        var code = cubeIndex;
+        while (code != 0)
         {
-            cubeIndex = MC33LookUpTable.LookUp(pcase, caseIndex++);
+            code = MC33LookUpTable.LookUp(pcase, caseIndex++);
             int f0 = 0, f1 = 0, f2 = 0;
 
             for (int k = 0; k < 3; k++)
             {
-                int edgeId = cubeIndex & 0x0F;
+                int edgeId = code & 0x0F;
 
                 if (p[edgeId] < 0)
                 {
@@ -662,7 +663,7 @@ public class MC33PrepareCS
                 else if (k == 1) f1 = p[edgeId];
                 else f2 = p[edgeId];
 
-                cubeIndex >>= 4;
+                code >>= 4;
             }
 
             if (f0 != f1 && f0 != f2 && f1 != f2)
@@ -674,9 +675,7 @@ public class MC33PrepareCS
 #endif
                 {
                     // 既存挙動維持：頂点順の入れ替え
-                    int tmp = f2;
-                    f2 = f0;
-                    f0 = tmp;
+                    (f2, f0) = (f0, f2);
                 }
 
                 writer.AddTriangle(f0, f1, f2);

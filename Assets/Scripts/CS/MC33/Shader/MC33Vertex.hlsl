@@ -6,6 +6,7 @@
 #include "UnityIndirect.cginc"
 
 StructuredBuffer<MCVertex> _Vertices; // xyz: position, w: packed normal
+// StructuredBuffer<uint> _Indices;
 // float4x4 _ObjectToWorld;
 
 void MC33Vertex_float(in uint vertexId, out float3 position, out float3 normal, out float4 color)

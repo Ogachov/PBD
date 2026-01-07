@@ -7,6 +7,7 @@
 #include "UnityIndirect.cginc"
 
 RWStructuredBuffer<MCVertex> _Vertices;
+RWStructuredBuffer<uint> _Indices;
 RWStructuredBuffer<IndirectDrawIndexedArgs> _DrawArgs;
 RWStructuredBuffer<uint> _IndexCounter;
 
@@ -34,7 +35,7 @@ void Init(uint3 id : SV_DispatchThreadID)
 void Draw(uint3 id : SV_DispatchThreadID)
 {
     uint prev;
-    InterlockedAdd(_DrawArgs[0].indexCountPerInstance, 3, prev);
+    InterlockedAdd(_IndexCounter[0], 3, prev);
     if (prev >= _VerticesCapacity)
     {
         return;
@@ -69,7 +70,10 @@ void Draw(uint3 id : SV_DispatchThreadID)
     vertex.color = color;
     _Vertices[baseIndex + 2] = vertex;
     
-    InterlockedAdd(_IndexCounter[0], 3, prev);
+    InterlockedAdd(_DrawArgs[0].indexCountPerInstance, 3, prev);
+    _Indices[prev] = baseIndex;
+    _Indices[prev + 1] = baseIndex + 1;
+    _Indices[prev + 2] = baseIndex + 2;
 }
 
 [numthreads(1,1,1)]

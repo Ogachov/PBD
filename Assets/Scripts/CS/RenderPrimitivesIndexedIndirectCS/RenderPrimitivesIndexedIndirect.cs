@@ -8,6 +8,7 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
     [SerializeField] private ComputeShader computeShader;
     
     private GraphicsBuffer _vertexBuffer;
+    private GraphicsBuffer _indexBuffer;
     private GraphicsBuffer _indirectArgsBuffer;
     private GraphicsBuffer.IndirectDrawIndexedArgs[] commandData;
     private GraphicsBuffer _indexCounterBuffer;
@@ -27,6 +28,7 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
         // 頂点バッファの作成 primitiveCount個の三角形を定義
         // 各頂点は float4 position, float4 normal, float4 color の形式
         _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, primitiveBufferCount * 3, sizeof(float) * 12);
+        _indexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, primitiveBufferCount * 3, sizeof(uint));
         // 間接描画用の引数バッファの作成
         _indirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.Structured, 1, GraphicsBuffer.IndirectDrawIndexedArgs.size);
         commandData = new GraphicsBuffer.IndirectDrawIndexedArgs[1];
@@ -42,6 +44,7 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
         
         // マテリアルにバッファをセット
         material.SetBuffer("_Vertices", _vertexBuffer);
+        material.SetBuffer("_Indices", _indexBuffer);
 
         k_Init = computeShader.FindKernel("Init");
         k_Draw = computeShader.FindKernel("Draw");
@@ -50,6 +53,7 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
         computeShader.SetBuffer(k_Init, "_IndexCounter", _indexCounterBuffer);
         
         computeShader.SetBuffer(k_Draw, "_Vertices", _vertexBuffer);
+        computeShader.SetBuffer(k_Draw, "_Indices", _indexBuffer);
         computeShader.SetBuffer(k_Draw, "_DrawArgs", _indirectArgsBuffer);
         computeShader.SetBuffer(k_Draw, "_IndexCounter", _indexCounterBuffer);
         
@@ -63,8 +67,9 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
     {
         // バッファの解放
         _vertexBuffer?.Release();
-        // _indexBuffer?.Release();
+        _indexBuffer?.Release();
         _indirectArgsBuffer?.Release();
+        _indexCounterBuffer?.Release();
     }
 
     // Update is called once per frame
@@ -76,7 +81,7 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
         
         computeShader.Dispatch(k_Draw, 1, 1, 1);
         
-        computeShader.Dispatch(k_SetDrawArgs, 1, 1, 1);
+        // computeShader.Dispatch(k_SetDrawArgs, 1, 1, 1);
         
         if (material == null) return;
 
@@ -86,7 +91,6 @@ public class RenderPrimitivesIndexedIndirect : MonoBehaviour
 
         rp.matProps = new MaterialPropertyBlock();
         
-        Graphics.RenderPrimitivesIndirect(rp, MeshTopology.Triangles, _indirectArgsBuffer, 1, 0);
-        
+        Graphics.RenderPrimitivesIndexedIndirect(rp, MeshTopology.Triangles, _indexBuffer, _indirectArgsBuffer, 1, 0);
     }
 }
