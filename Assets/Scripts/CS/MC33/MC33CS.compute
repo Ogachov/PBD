@@ -20,7 +20,7 @@ cbuffer Params
     uint _VerticesCapacity;
 }
 
-uint GridIndex(int x, int y, int z)
+uint VolumeIndex(int x, int y, int z)
 {
     uint nx1 = (uint)(_NumGrid.x + 1);
     uint ny1 = (uint)(_NumGrid.y + 1);
@@ -29,7 +29,7 @@ uint GridIndex(int x, int y, int z)
 
 float SampleVolume(int x, int y, int z)
 {
-    return _Volumes[GridIndex(x, y, z)];
+    return _Volumes[VolumeIndex(x, y, z)];
 }
 
 float3 GradientFromCells(int x, int y, int z)
@@ -53,7 +53,7 @@ float3 GradientFromCells(int x, int y, int z)
 
 float3 GradientAt(int x, int y, int z)
 {
-    return _Gradients[GridIndex(x, y, z)];
+    return _Gradients[VolumeIndex(x, y, z)];
 }
 
 static const int3 s_cornerOffset[8] =
@@ -528,7 +528,7 @@ void BuildGradients(uint3 id : SV_DispatchThreadID)
 
     if (x >= nx1 || y >= ny1 || z >= nz1) return;
 
-    _Gradients[GridIndex(x,y,z)] = GradientFromCells(x,y,z);
+    _Gradients[VolumeIndex(x,y,z)] = GradientFromCells(x,y,z);
 }
 
 [numthreads(8,8,8)]

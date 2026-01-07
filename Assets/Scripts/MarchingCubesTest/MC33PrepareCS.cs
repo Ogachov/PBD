@@ -95,7 +95,7 @@ public class MC33PrepareCS
         return x + y * (_MCn.x + 1) + z * _volumeStrideXY;
     }
 
-    private float GetVolumeValue(int x, int y, int z)
+    private float SampleVolume(int x, int y, int z)
     {
         return _Volumes[VolumeIndex(x, y, z)];
     }
@@ -307,16 +307,16 @@ public class MC33PrepareCS
     }
 
     // ============================================================
-    // find_case：頂点生成部を「Edge補間関数」に寄せ、配列newを排除
+    // FindCaseAndEmit：頂点生成部を「Edge補間関数」に寄せ、配列newを排除
     // ============================================================
-    private void find_case(ISurfaceWriter writer, int x, int y, int z, int i, float[] v)
+    private void FindCaseAndEmit(ISurfaceWriter writer, int x, int y, int z, int cubeIndex, float[] v)
     {
         var pcase = MC33LookUpTable.Case.Case_1;
         var caseIndex = 0;
 
         int m, c;
-        m = i & 0x80;
-        c = MC33LookUpTable.Case_Index[(m != 0) ? (i ^ 0xff) : i];
+        m = cubeIndex & 0x80;
+        c = MC33LookUpTable.Case_Index[(m != 0) ? (cubeIndex ^ 0xff) : cubeIndex];
 
         Span<int> face = stackalloc int[6];
 
@@ -334,7 +334,7 @@ public class MC33PrepareCS
                 break;
             case 3:
                 if ((c & 0x0080) != 0) m ^= 0x80;
-                if (((m != 0 ? i : i ^ 0xFF) & face_test1((c & 0x7F) >> 1, v)) != 0)
+                if (((m != 0 ? cubeIndex : cubeIndex ^ 0xFF) & face_test1((c & 0x7F) >> 1, v)) != 0)
                 {
                     pcase = MC33LookUpTable.Case.Case_3_2;
                     caseIndex = 4 * (c & 0x7F);
@@ -367,7 +367,7 @@ public class MC33PrepareCS
                 break;
             case 6:
                 if ((c & 0x0080) != 0) m ^= 0x80;
-                if (((m != 0 ? i : i ^ 0xFF) & face_test1((c & 0x7F) % 6, v)) != 0)
+                if (((m != 0 ? cubeIndex : cubeIndex ^ 0xFF) & face_test1((c & 0x7F) % 6, v)) != 0)
                 {
                     pcase = MC33LookUpTable.Case.Case_6_2;
                     caseIndex = 5 * (c & 0x7F);
@@ -386,7 +386,7 @@ public class MC33PrepareCS
                 break;
             case 7:
                 if ((c & 0x0080) != 0) m ^= 0x80;
-                switch (face_tests(face, i, (m != 0 ? 1 : -1), v))
+                switch (face_tests(face, cubeIndex, (m != 0 ? 1 : -1), v))
                 {
                     case -3:
                         pcase = MC33LookUpTable.Case.Case_7_1;
@@ -447,7 +447,7 @@ public class MC33PrepareCS
                 caseIndex = (c & 0x7F);
                 break;
             case 10:
-                switch (face_tests(face, i, (m != 0 ? 1 : -1), v))
+                switch (face_tests(face, cubeIndex, (m != 0 ? 1 : -1), v))
                 {
                     case -2:
                     {
@@ -495,7 +495,7 @@ public class MC33PrepareCS
                 caseIndex = (c & 0x7F);
                 break;
             case 12:
-                switch (face_tests(face, i, (m != 0 ? 1 : -1), v))
+                switch (face_tests(face, cubeIndex, (m != 0 ? 1 : -1), v))
                 {
                     case -2:
                         if (interior_test((int)MC33LookUpTable._12_test_index[0, (int)(c & 0x7F)], 0, v) != 0)
@@ -535,7 +535,7 @@ public class MC33PrepareCS
             case 13:
             {
                 // Case 13 は face_tests の結果（-6..6）をさらに分類して pcase/caseIndex を決定する
-                int ct = face_tests(face, i, (m != 0 ? 1 : -1), v);
+                int ct = face_tests(face, cubeIndex, (m != 0 ? 1 : -1), v);
 
                 switch (math.abs(ct))
                 {
@@ -557,7 +557,7 @@ public class MC33PrepareCS
                         caseIndex = 6 * (3 * cc + 3 + which);
 
                         // 元実装と同じく、この分岐では以降の while(i!=0) を確実に回すため i を 1 にする
-                        i = 1;
+                        cubeIndex = 1;
                         break;
                     }
 
@@ -606,7 +606,7 @@ public class MC33PrepareCS
                                 caseIndex = 6 * cc;
 
                                 // 元実装と同じく、以降の while(i!=0) を回すため i=1 を立てる
-                                i = 1;
+                                cubeIndex = 1;
                             }
                         }
 
@@ -627,14 +627,14 @@ public class MC33PrepareCS
         Span<int> p = stackalloc int[13];
         for (int pi = 0; pi < p.Length; pi++) p[pi] = -1;
 
-        while (i != 0)
+        while (cubeIndex != 0)
         {
-            i = MC33LookUpTable.LookUp(pcase, caseIndex++);
+            cubeIndex = MC33LookUpTable.LookUp(pcase, caseIndex++);
             int f0 = 0, f1 = 0, f2 = 0;
 
             for (int k = 0; k < 3; k++)
             {
-                int edgeId = i & 0x0F;
+                int edgeId = cubeIndex & 0x0F;
 
                 if (p[edgeId] < 0)
                 {
@@ -662,7 +662,7 @@ public class MC33PrepareCS
                 else if (k == 1) f1 = p[edgeId];
                 else f2 = p[edgeId];
 
-                i >>= 4;
+                cubeIndex >>= 4;
             }
 
             if (f0 != f1 && f0 != f2 && f1 != f2)
@@ -684,7 +684,7 @@ public class MC33PrepareCS
         }
     }
 
-    private Mesh calc_isosurface(float iso, float[] volumes)
+    private Mesh BuildIsoSurface(float iso, float[] volumes)
     {
         _Volumes = volumes;
 
@@ -708,19 +708,19 @@ public class MC33PrepareCS
             {
                 for (int x = 0; x < nx; x++)
                 {
-                    float V00 = GetVolumeValue(x, y, z);
-                    float V01 = GetVolumeValue(x, y + 1, z);
-                    float V10 = GetVolumeValue(x, y, z + 1);
-                    float V11 = GetVolumeValue(x, y + 1, z + 1);
+                    float V00 = SampleVolume(x, y, z);
+                    float V01 = SampleVolume(x, y + 1, z);
+                    float V10 = SampleVolume(x, y, z + 1);
+                    float V11 = SampleVolume(x, y + 1, z + 1);
                     V[0] = iso - V00;
                     V[1] = iso - V01;
                     V[2] = iso - V11;
                     V[3] = iso - V10;
 
-                    V00 = GetVolumeValue(x + 1, y, z);
-                    V01 = GetVolumeValue(x + 1, y + 1, z);
-                    V10 = GetVolumeValue(x + 1, y, z + 1);
-                    V11 = GetVolumeValue(x + 1, y + 1, z + 1);
+                    V00 = SampleVolume(x + 1, y, z);
+                    V01 = SampleVolume(x + 1, y + 1, z);
+                    V10 = SampleVolume(x + 1, y, z + 1);
+                    V11 = SampleVolume(x + 1, y + 1, z + 1);
                     V[4] = iso - V00;
                     V[5] = iso - V01;
                     V[6] = iso - V11;
@@ -738,7 +738,7 @@ public class MC33PrepareCS
 
                     if (idx != 0 && idx != 0xff)
                     {
-                        find_case(writer, x, y, z, idx, V);
+                        FindCaseAndEmit(writer, x, y, z, idx, V);
                     }
                 }
             }
@@ -763,7 +763,7 @@ public class MC33PrepareCS
         init_temp_isosurface(grd);
         PrecalcGradients(volumes);
 
-        var mesh = calc_isosurface(iso, volumes);
+        var mesh = BuildIsoSurface(iso, volumes);
 
         if (_gradients.IsCreated)
         {
