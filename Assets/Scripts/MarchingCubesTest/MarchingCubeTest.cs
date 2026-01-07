@@ -128,8 +128,8 @@ public class MarchingCubeTest : MonoBehaviour
         
         // computeShader.Dispatch(k_SetIndirectArgs, 1, 1, 1);
         
-        // int[] countArray = {0, 0, 0, 0};
-        // _indirectArgsBuffer.GetData(countArray);
+        int[] countArray = {0, 0, 0, 0, 0};
+        _indirectArgsBuffer.GetData(countArray);
         // Debug.Log(countArray[0] + " vertices generated.");
         //
         // var n = Mathf.Min(8, countArray[0]);
@@ -147,9 +147,11 @@ public class MarchingCubeTest : MonoBehaviour
         //     material.SetBuffer("_Vertices", _vertexBuffer);
         // }
         
-        // 計算後の_vertexBufferの内容を先頭から１００個程度コンソールに出力する
         Vector4[] tmp = new Vector4[100 * 3 * 4];
         _vertexBuffer.GetData(tmp);
+        
+        uint[] indexTmp = new uint[100 * 3];
+        _indexBuffer.GetData(indexTmp);
         
     }
 
