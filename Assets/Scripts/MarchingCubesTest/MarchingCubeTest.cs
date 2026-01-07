@@ -36,6 +36,8 @@ public class MarchingCubeTest : MonoBehaviour
     private int k_InitIndirectArgs;
     private int k_SetIndirectArgs;
     
+    private GraphicsBuffer _debugBuffer;
+    
     private float _lastIsoLevel = -1.0f;
     private Vector3 _lastNoiseOffset = Vector3.zero;
     private float _lastNoiseScale = 1.0f;
@@ -63,6 +65,8 @@ public class MarchingCubeTest : MonoBehaviour
         k_BuildIsoSurface = computeShader.FindKernel("BuildIsoSurface");
         k_InitIndirectArgs = computeShader.FindKernel("InitIndirectArgs");
         k_SetIndirectArgs = computeShader.FindKernel("SetIndirectArgs");
+        
+        _debugBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured | GraphicsBuffer.Target.Append, maxTriangles * 3, sizeof(uint));
     }
     
     private void InitComputeShaderBuffers()
@@ -94,6 +98,7 @@ public class MarchingCubeTest : MonoBehaviour
         computeShader.SetBuffer(k_BuildIsoSurface, "_Indices", _indexBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_IndirectArgs", _indirectArgsBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_IndexCounter", _indexCounterBuffer);
+        computeShader.SetBuffer(k_BuildIsoSurface, "_DebugBuffer", _debugBuffer);
         
         computeShader.SetBuffer(k_InitIndirectArgs, "_IndirectArgs", _indirectArgsBuffer);
         computeShader.SetBuffer(k_InitIndirectArgs, "_IndexCounter", _indexCounterBuffer);
@@ -119,7 +124,9 @@ public class MarchingCubeTest : MonoBehaviour
         var threadGroupsY = Mathf.CeilToInt((float)_gridN.y / 8);
         var threadGroupsZ = Mathf.CeilToInt((float)_gridN.z / 8);
 
-        _vertexBuffer.SetCounterValue(0);
+        // _vertexBuffer.SetCounterValue(0);
+        _debugBuffer.SetCounterValue(0);
+        
         // 勾配計算
         computeShader.Dispatch(k_BuildGradients, threadGroupsX, threadGroupsY, threadGroupsZ);
         
@@ -128,8 +135,8 @@ public class MarchingCubeTest : MonoBehaviour
         
         // computeShader.Dispatch(k_SetIndirectArgs, 1, 1, 1);
         
-        // int[] countArray = {0, 0, 0, 0};
-        // _indirectArgsBuffer.GetData(countArray);
+        int[] countArray = {0, 0, 0, 0, 0};
+        _indirectArgsBuffer.GetData(countArray);
         // Debug.Log(countArray[0] + " vertices generated.");
         //
         // var n = Mathf.Min(8, countArray[0]);
@@ -147,9 +154,14 @@ public class MarchingCubeTest : MonoBehaviour
         //     material.SetBuffer("_Vertices", _vertexBuffer);
         // }
         
-        // 計算後の_vertexBufferの内容を先頭から１００個程度コンソールに出力する
         Vector4[] tmp = new Vector4[100 * 3 * 4];
         _vertexBuffer.GetData(tmp);
+        
+        uint[] indexTmp = new uint[100 * 3];
+        _indexBuffer.GetData(indexTmp);
+        
+        uint[] debugTmp = new uint[100];    // デバッグ用にComputeShaderから書き出した値。あとで消す
+        _debugBuffer.GetData(debugTmp);
         
     }
 
@@ -161,6 +173,8 @@ public class MarchingCubeTest : MonoBehaviour
         _indexBuffer?.Release();
         _indirectArgsBuffer?.Release();
         _indexCounterBuffer?.Release();
+        
+        _debugBuffer?.Release();
     }
 
     private void Update()

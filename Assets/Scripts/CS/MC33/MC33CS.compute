@@ -10,6 +10,8 @@
 StructuredBuffer<float> _Volumes;                 // (Nx+1)*(Ny+1)*(Nz+1)
 RWStructuredBuffer<float3> _Gradients;          // 同サイズ
 
+AppendStructuredBuffer<uint> _DebugBuffer;
+
 cbuffer Params
 {
     int3   _NumGrid;    // グリッド個数 (nx, ny, nz)
@@ -52,7 +54,7 @@ float3 GradientFromCells(int x, int y, int z)
     return float3(gx, gy, gz);
 }
 
-float3 GradientAt(int x, int y, int z)
+float3 GetGridGradient(int x, int y, int z)
 {
     return _Gradients[VolumeIndex(x, y, z)];
 }
@@ -148,11 +150,16 @@ int InteriorTest(int i, int flagtplane, float v[8])
     return 0;
 }
 
-// エッジ頂点生成（セル内キャッシュ：packedPos[edge]=float4(worldPos, asfloat(oct16))）
-bool EnsureEdgeVertex(int cellX, int cellY, int cellZ, int edgeId, float v[8], inout bool has[13], inout float4 mcv[13])
+uint WriteGridVertex(int gx, int gy, int gz, float4 col, uint verticesCapacity)
 {
-    if (has[edgeId]) return true;
+    float3 p = float3(gx, gy, gz);
+    float3 n = normalize(GetGridGradient(gx, gy, gz));
+    return AppendVertex(p, n, col, verticesCapacity);
+}
 
+// エッジ頂点生成
+uint WriteEdgeVertex(int cellX, int cellY, int cellZ, int edgeId, float v[8], float4 col, uint verticesCapacity)
+{
     int2 cc = s_edgeCorners[edgeId];
     int ca = cc.x;
     int cb = cc.y;
@@ -163,75 +170,67 @@ bool EnsureEdgeVertex(int cellX, int cellY, int cellZ, int edgeId, float v[8], i
     int3 oa = s_cornerOffset[ca];
     int3 ob = s_cornerOffset[cb];
 
-    int ax = cellX + oa.x, ay = cellY + oa.y, az = cellZ + oa.z;
-    int bx = cellX + ob.x, by = cellY + ob.y, bz = cellZ + ob.z;
+    int ax = cellX + oa.x;
+    int ay = cellY + oa.y;
+    int az = cellZ + oa.z;
+    
+    int bx = cellX + ob.x;
+    int by = cellY + ob.y;
+    int bz = cellZ + ob.z;
 
     // 浮動小数の "== 0" は危険なので epsilon に寄せる（CPU版よりGPU版で重要）
     const float epsZero = 1e-8;
 
     if (abs(va) < epsZero)
     {
-        mcv[edgeId] = PackVertexNormal(float3(ax,ay,az),GradientAt(ax, ay, az));
-        has[edgeId] = true;
-        return true;
+        return WriteGridVertex(ax, ay, az, col, verticesCapacity);
     }
     if (abs(vb) < epsZero)
     {
-        mcv[edgeId] = PackVertexNormal(float3(bx,by,bz),GradientAt(bx, by, bz));
-        has[edgeId] = true;
-        return true;
+        return WriteGridVertex(bx, by, bz, col, verticesCapacity);
     }
 
-    float denom = (va - vb);
-    const float epsDenom = 1e-8;
+    // 線形補間 t
+    float t = va / (va - vb);
 
-    // 交点が定義できない/不安定：このエッジ頂点は作らない（=三角形を捨てる方向）
-    if (abs(denom) < epsDenom)
-        return false;
+    // 位置補間（グリッド空間）
+    float3 pa = float3(ax, ay, az);
+    float3 pb = float3(bx, by, bz);
+    float3 p = lerp(pa, pb, t);
 
-    float t = va / denom;
+    // 法線（勾配）も線形補間
+    float3 ga = GetGridGradient(ax, ay, az);
+    float3 gb = GetGridGradient(bx, by, bz);
+    float3 n = normalize(lerp(ga, gb, t));
 
-    // t が NaN/Inf になるケースの保険
-    if (!isfinite(t))
-        return false;
-
-    float3 p = lerp(float3(ax, ay, az), float3(bx, by, bz), t);
-    float3 n = lerp(GradientAt(ax, ay, az), GradientAt(bx, by, bz), t);
-
-    // 入力が壊れてる場合は捨てる
-    if (any(!isfinite(p)) || any(!isfinite(n)))
-        return false;
-
-    mcv[edgeId] = PackVertexNormal(p.xyz,n.xyz);
-    has[edgeId] = true;
-    return true;
+    return AppendVertex(p, n, col, verticesCapacity);
 }
 
-bool EnsureCenterVertex(int cellX, int cellY, int cellZ, inout bool has[13], inout float4 mcv[13])
-{
-    const int edgeId = 12;
-    if (has[edgeId]) return true;
-
-    float3 p = float3(cellX + 0.5, cellY + 0.5, cellZ + 0.5);
-    float3 n =
-        GradientAt(cellX,     cellY,     cellZ) +
-        GradientAt(cellX + 1, cellY,     cellZ) +
-        GradientAt(cellX,     cellY + 1, cellZ) +
-        GradientAt(cellX + 1, cellY + 1, cellZ) +
-        GradientAt(cellX,     cellY,     cellZ + 1) +
-        GradientAt(cellX + 1, cellY,     cellZ + 1) +
-        GradientAt(cellX,     cellY + 1, cellZ + 1) +
-        GradientAt(cellX + 1, cellY + 1, cellZ + 1);
-
-    n *= (1.0 / 8.0);
-
-    if (any(!isfinite(p)) || any(!isfinite(n)))
-        return false;
-
-    mcv[edgeId] = PackVertexNormal(p,n);
-    has[edgeId] = true;
-    return true;
-}
+// bool EnsureCenterVertex(int cellX, int cellY, int cellZ, inout bool has[13], inout float4 mcv[13])
+// {
+//     const int edgeId = 12;
+//     if (has[edgeId]) return true;
+//
+//     float3 p = float3(cellX + 0.5, cellY + 0.5, cellZ + 0.5);
+//     float3 n =
+//         GetGridGradient(cellX,     cellY,     cellZ) +
+//         GetGridGradient(cellX + 1, cellY,     cellZ) +
+//         GetGridGradient(cellX,     cellY + 1, cellZ) +
+//         GetGridGradient(cellX + 1, cellY + 1, cellZ) +
+//         GetGridGradient(cellX,     cellY,     cellZ + 1) +
+//         GetGridGradient(cellX + 1, cellY,     cellZ + 1) +
+//         GetGridGradient(cellX,     cellY + 1, cellZ + 1) +
+//         GetGridGradient(cellX + 1, cellY + 1, cellZ + 1);
+//
+//     n *= (1.0 / 8.0);
+//
+//     if (any(!isfinite(p)) || any(!isfinite(n)))
+//         return false;
+//
+//     mcv[edgeId] = PackVertexNormal(p,n);
+//     has[edgeId] = true;
+//     return true;
+// }
 
 // Case判定＆出力（本体）
 void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
@@ -466,51 +465,82 @@ void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
             break;
     }
 
-    bool has[13];
-    float4 mcv[13];
-    [unroll] for (int i = 0; i < 13; i++) { has[i] = false; mcv[i] = 0; }
+    float4 col = float4(1.0f, 1.0f, 1.0f, 1.0f);
+    
+    int p[13];
+    for (int pi = 0; pi < 13; pi++) p[pi] = -1;
 
     int code = cubeIndex;
     while (code != 0)
     {
         code = LookUp(pcase, caseIndex++);
+        
+        int f0 = 0, f1 = 0, f2 = 0;
+        
+        for (int k = 0; k < 3; k++)
+        {
+            int edgeId = code & 0x0F;
+            
+            // _DebugBuffer.Append((uint)edgeId);   // edgeIdにはそれっぽい値がはいってる
 
-        int e0 = (code      ) & 0x0F;
-        int e1 = (code >>  4) & 0x0F;
-        int e2 = (code >>  8) & 0x0F;
+            if (p[edgeId] < 0)
+            {
+                if (edgeId == 12)
+                {
+                    // Interior center は元コード同等（勾配平均）
+                    float3 center = float3(x + 0.5f, y + 0.5f, z + 0.5f);
+                    float3 sumG =
+                        GetGridGradient(x, y, z) + GetGridGradient(x + 1, y, z) +
+                        GetGridGradient(x, y + 1, z) + GetGridGradient(x + 1, y + 1, z) +
+                        GetGridGradient(x, y, z + 1) + GetGridGradient(x + 1, y, z + 1) +
+                        GetGridGradient(x, y + 1, z + 1) + GetGridGradient(x + 1, y + 1, z + 1);
 
-        bool ok0 = (e0 == 12) ? EnsureCenterVertex(x, y, z, has, mcv)
-                              : EnsureEdgeVertex(x, y, z, e0, v, has, mcv);
+                    float3 n = normalize(sumG / 8.0f);
+                    p[12] = AppendVertex(center, n, col, _VerticesCapacity);
+                }
+                else
+                {
+                    // 12本のエッジは共通関数で生成
+                    p[edgeId] = WriteEdgeVertex(x, y, z, edgeId, v, col, _VerticesCapacity);
+                    
+                    // _DebugBuffer.Append((uint)p[edgeId]);// これが全部１になってる 
+                }
+            }
+            
+            if (k == 0) f0 = p[edgeId];
+            else if (k == 1) f1 = p[edgeId];
+            else f2 = p[edgeId];
+            code >>= 4;
+        }
 
-        bool ok1 = (e1 == 12) ? EnsureCenterVertex(x, y, z, has, mcv)
-                              : EnsureEdgeVertex(x, y, z, e1, v, has, mcv);
-
-        bool ok2 = (e2 == 12) ? EnsureCenterVertex(x, y, z, has, mcv)
-                              : EnsureEdgeVertex(x, y, z, e2, v, has, mcv);
-
-        if (!(ok0 && ok1 && ok2))
-            continue;
-
+        // _DebugBuffer.Append((uint)f0);   // f0, f1, f2が全部１になってる
+        // _DebugBuffer.Append((uint)f1);
+        // _DebugBuffer.Append((uint)f2);
+// #if 1
+        if (f0 != f1 && f0 != f2 && f1 != f2)
+        {
 #if defined(MC_Normal_neg)
-        bool flip = (m != 0);
+            if (m != 0)
 #else
-        bool flip = (m == 0);
+            if (m == 0)
 #endif
-        
-#if 0
-        //  EmitTriangleに正しいデータが渡っていればバグらない事が判明した
-        if (flip) EmitTriangle(mcv[e2], mcv[e1], mcv[e0], _VerticesCapacity);
-        else      EmitTriangle(mcv[e0], mcv[e1], mcv[e2], _VerticesCapacity);
-#else        
-        float3 p0 = float3(x, y, z);
-        float3 p1 = float3(x + 1, y, z);
-        float3 p2 = float3(x, y + 1, z);
-        uint i0 = AppendVertex(p0, GradientAt(x, y, z), float4(1,1,1,1), _VerticesCapacity);
-        uint i1 = AppendVertex(p1, GradientAt(x + 1, y, z), float4(1,1,1,1), _VerticesCapacity);
-        uint i2 = AppendVertex(p2, GradientAt(x, y + 1, z), float4(1,1,1,1), _VerticesCapacity);
-        AppendTriangle(i0, i1, i2, _IndicesCapacity);
-        
-#endif
+            {
+                AppendTriangle(f2, f1, f0, _IndicesCapacity);
+            }
+            else
+            {
+                AppendTriangle(f0, f1, f2, _IndicesCapacity);
+            }
+        }
+// #else        
+        // float3 p0 = float3(x, y, z);
+        // float3 p1 = float3(x + 1, y, z);
+        // float3 p2 = float3(x, y + 1, z);
+        // uint i0 = AppendVertex(p0, GetGridGradient(x, y, z), float4(1,1,1,1), _VerticesCapacity);
+        // uint i1 = AppendVertex(p1, GetGridGradient(x + 1, y, z), float4(1,1,1,1), _VerticesCapacity);
+        // uint i2 = AppendVertex(p2, GetGridGradient(x, y + 1, z), float4(1,1,1,1), _VerticesCapacity);
+        // AppendTriangle(i0, i1, i2, _IndicesCapacity);
+// #endif
     }
 }
 
@@ -558,7 +588,7 @@ void BuildIsoSurface(uint3 id : SV_DispatchThreadID)
     v[6] = _Iso - V11;
     v[7] = _Iso - V10;
 
-    int idx =
+    uint idx =
         ((v[0] >= 0.0 ? 1 : 0) << 7) |
         ((v[1] >= 0.0 ? 1 : 0) << 6) |
         ((v[2] >= 0.0 ? 1 : 0) << 5) |

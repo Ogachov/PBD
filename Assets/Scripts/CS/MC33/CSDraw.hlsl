@@ -6,17 +6,18 @@
 
 RWStructuredBuffer<MCVertex> _Vertices;     // 3頂点=1三角形（MeshTopology.Triangles）
 RWStructuredBuffer<uint> _Indices;      // インデックスバッファ（必要ならば使用）
-RWStructuredBuffer<IndirectDrawArgs> _IndirectArgs;         // uint[4] (vertexCountPerInstance, instanceCount, startVertex, startInstance)
+RWStructuredBuffer<IndirectDrawIndexedArgs> _IndirectArgs;         // uint[4] (vertexCountPerInstance, instanceCount, startVertex, startInstance)
 RWStructuredBuffer<uint> _IndexCounter;
 
 [numthreads(1,1,1)]
 void InitIndirectArgs(uint3 id : SV_DispatchThreadID)
 {
-    IndirectDrawArgs args;
-    args.vertexCountPerInstance = 0;
+    IndirectDrawIndexedArgs args;
+    args.indexCountPerInstance = 0;
     args.instanceCount = 1;
     args.startInstance = 0;
-    args.startVertex = 0;
+    args.baseVertexIndex = 0;
+    args.startIndex = 0;
     _IndirectArgs[0] = args;
     
     _IndexCounter[0] = 0;
@@ -25,11 +26,12 @@ void InitIndirectArgs(uint3 id : SV_DispatchThreadID)
 [numthreads(1,1,1)]
 void SetIndirectArgs(uint3 id : SV_DispatchThreadID)
 {
-    IndirectDrawArgs args;
-    args.vertexCountPerInstance = _IndexCounter[0];
+    IndirectDrawIndexedArgs args;
+    args.indexCountPerInstance = _IndexCounter[0];
     args.instanceCount = 1;
     args.startInstance = 0;
-    args.startVertex = 0;
+    args.baseVertexIndex = 0;
+    args.startIndex = 0;
     _IndirectArgs[0] = args;
 }
 
@@ -53,7 +55,7 @@ uint AppendVertex(float3 position, float3 normal, float4 color, uint vertexCapac
 void AppendTriangle(uint i0, uint i1, uint i2, in uint indexCapacity)
 {
     uint prev;
-    InterlockedAdd(_IndirectArgs[0].vertexCountPerInstance, 3, prev);
+    InterlockedAdd(_IndirectArgs[0].indexCountPerInstance, 3, prev);
     if (prev >= indexCapacity)
     {
         return;

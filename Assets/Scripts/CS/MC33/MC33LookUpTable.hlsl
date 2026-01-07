@@ -1,6 +1,6 @@
 /*The second hexadecimal digit is the MC33 case number, the last two digits contain information
 about the position in the respetive case array and the order of triangle vertices*/
-uint Case_Index[] =
+static const uint Case_Index[] =
 {
     0x0080, 0x0186, 0x0187, 0x028E, 0x0184, 0x038B, 0x0296, 0x05BC, //007
     0x0185, 0x0290, 0x038A, 0x058F, 0x028A, 0x05C5, 0x0598, 0x0800, //015
@@ -43,7 +43,7 @@ Vertices order in triangles:
 /*position*index#vertices*/
 /* _12_test_index the first two rows contains the diagonal label necessary for
  the interior test, the another used to face test comparison, Cases 12.2 */
-uint _12_test_index[] =
+static const uint _12_test_index[] =
 {
     0, 3, 0, 1, 0, 3, 1, 0, 2, 0, 0, 2,
     2, 1, 2, 3, 1, 2, 2, 3, 3, 3, 1, 1,
@@ -142,7 +142,7 @@ uint LookUp_12_test_index(int i, int j)
 #define Case_14_Top (2158)
 
 // Case_1からCase_14までのすべてのケースを連結したテーブル
-uint CaseTable[] =
+static const uint CaseTable[] =
 {
     // Case_1
     0x0380, // index = 0
