@@ -18,6 +18,7 @@ cbuffer Params
     float  _Iso;        // 境界面とする閾値
     
     uint _VerticesCapacity;
+    uint _IndicesCapacity;
 }
 
 uint VolumeIndex(int x, int y, int z)
@@ -496,18 +497,18 @@ void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
         bool flip = (m == 0);
 #endif
         
-#if 1
+#if 0
         //  EmitTriangleに正しいデータが渡っていればバグらない事が判明した
         if (flip) EmitTriangle(mcv[e2], mcv[e1], mcv[e0], _VerticesCapacity);
         else      EmitTriangle(mcv[e0], mcv[e1], mcv[e2], _VerticesCapacity);
 #else        
-        // float3 p0 = float3(0, 0, 0);
-        // float3 p1 = float3( + 1, 0, 0);
-        // float3 p2 = float3(0, 0 + 1, 0);
         float3 p0 = float3(x, y, z);
         float3 p1 = float3(x + 1, y, z);
         float3 p2 = float3(x, y + 1, z);
-        AppendTriangle(p0, p1, p2, float3(0,0,1), float3(1,0,0), _VerticesCapacity);
+        uint i0 = AppendVertex(p0, GradientAt(x, y, z), float4(1,1,1,1), _VerticesCapacity);
+        uint i1 = AppendVertex(p1, GradientAt(x + 1, y, z), float4(1,1,1,1), _VerticesCapacity);
+        uint i2 = AppendVertex(p2, GradientAt(x, y + 1, z), float4(1,1,1,1), _VerticesCapacity);
+        AppendTriangle(i0, i1, i2, _IndicesCapacity);
         
 #endif
     }

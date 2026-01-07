@@ -28,6 +28,7 @@ public class MarchingCubeTest : MonoBehaviour
     private GraphicsBuffer _volumeBuffer;
     private GraphicsBuffer _gradientBuffer;
     private GraphicsBuffer _vertexBuffer;
+    private GraphicsBuffer _indexBuffer;
     private GraphicsBuffer _indirectArgsBuffer;
     private GraphicsBuffer _indexCounterBuffer;
     private int k_BuildGradients;
@@ -69,6 +70,7 @@ public class MarchingCubeTest : MonoBehaviour
         _volumeBuffer?.Release();
         _gradientBuffer?.Release();
         _vertexBuffer?.Release();
+        _indexBuffer?.Release();
         _indirectArgsBuffer?.Release();
         _indexCounterBuffer?.Release();
 
@@ -78,8 +80,9 @@ public class MarchingCubeTest : MonoBehaviour
 
         var vertexCount = maxTriangles * 3;
         _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, vertexCount, sizeof(float) * 4 * 3);   //pos,nrm,col
+        _indexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, vertexCount, sizeof(uint));
 
-        _indirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.Structured, 1, GraphicsBuffer.IndirectDrawArgs.size);
+        _indirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.Structured, 1, GraphicsBuffer.IndirectDrawIndexedArgs.size);
         _indexCounterBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 1, sizeof(uint));
 
         computeShader.SetBuffer(k_BuildGradients, "_Volumes", _volumeBuffer);
@@ -88,6 +91,7 @@ public class MarchingCubeTest : MonoBehaviour
         computeShader.SetBuffer(k_BuildIsoSurface, "_Volumes", _volumeBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_Gradients", _gradientBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_Vertices", _vertexBuffer);
+        computeShader.SetBuffer(k_BuildIsoSurface, "_Indices", _indexBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_IndirectArgs", _indirectArgsBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_IndexCounter", _indexCounterBuffer);
         
@@ -109,6 +113,7 @@ public class MarchingCubeTest : MonoBehaviour
         computeShader.SetFloats("_Step", grid.d.x, grid.d.y, grid.d.z);
         computeShader.SetFloat("_Iso", isoLevel);
         computeShader.SetInt("_VerticesCapacity", maxTriangles * 3);
+        computeShader.SetInt("_IndicesCapacity", maxTriangles * 3);
 
         var threadGroupsX = Mathf.CeilToInt((float)_gridN.x / 8);
         var threadGroupsY = Mathf.CeilToInt((float)_gridN.y / 8);
@@ -121,7 +126,8 @@ public class MarchingCubeTest : MonoBehaviour
         // 等値面計算
         computeShader.Dispatch(k_BuildIsoSurface, threadGroupsX, threadGroupsY, threadGroupsZ);
         
-        computeShader.Dispatch(k_SetIndirectArgs, 1, 1, 1);
+        // computeShader.Dispatch(k_SetIndirectArgs, 1, 1, 1);
+        
         // int[] countArray = {0, 0, 0, 0};
         // _indirectArgsBuffer.GetData(countArray);
         // Debug.Log(countArray[0] + " vertices generated.");
@@ -152,6 +158,7 @@ public class MarchingCubeTest : MonoBehaviour
         _volumeBuffer?.Release();
         _gradientBuffer?.Release();
         _vertexBuffer?.Release();
+        _indexBuffer?.Release();
         _indirectArgsBuffer?.Release();
         _indexCounterBuffer?.Release();
     }
@@ -218,7 +225,8 @@ public class MarchingCubeTest : MonoBehaviour
                 };
 
                 // MeshTopology.Triangles: args[0] は「頂点数」（三角形数*3）でOK
-                Graphics.RenderPrimitivesIndirect(rp, MeshTopology.Triangles, _indirectArgsBuffer, 1);
+                // Graphics.RenderPrimitivesIndirect(rp, MeshTopology.Triangles, _indirectArgsBuffer, 1);
+                Graphics.RenderPrimitivesIndexedIndirect(rp, MeshTopology.Triangles, _indexBuffer, _indirectArgsBuffer, 1, 0);
             }
         }
         else if (prepareComputeShader)
