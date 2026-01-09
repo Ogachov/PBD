@@ -36,8 +36,6 @@ public class MarchingCubeTest : MonoBehaviour
     private int k_InitIndirectArgs;
     private int k_SetIndirectArgs;
     
-    private GraphicsBuffer _debugBuffer;
-    
     private float _lastIsoLevel = -1.0f;
     private Vector3 _lastNoiseOffset = Vector3.zero;
     private float _lastNoiseScale = 1.0f;
@@ -65,8 +63,6 @@ public class MarchingCubeTest : MonoBehaviour
         k_BuildIsoSurface = computeShader.FindKernel("BuildIsoSurface");
         k_InitIndirectArgs = computeShader.FindKernel("InitIndirectArgs");
         k_SetIndirectArgs = computeShader.FindKernel("SetIndirectArgs");
-        
-        _debugBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured | GraphicsBuffer.Target.Append, maxTriangles * 3, sizeof(uint));
     }
     
     private void InitComputeShaderBuffers()
@@ -98,7 +94,6 @@ public class MarchingCubeTest : MonoBehaviour
         computeShader.SetBuffer(k_BuildIsoSurface, "_Indices", _indexBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_IndirectArgs", _indirectArgsBuffer);
         computeShader.SetBuffer(k_BuildIsoSurface, "_IndexCounter", _indexCounterBuffer);
-        computeShader.SetBuffer(k_BuildIsoSurface, "_DebugBuffer", _debugBuffer);
         
         computeShader.SetBuffer(k_InitIndirectArgs, "_IndirectArgs", _indirectArgsBuffer);
         computeShader.SetBuffer(k_InitIndirectArgs, "_IndexCounter", _indexCounterBuffer);
@@ -123,46 +118,12 @@ public class MarchingCubeTest : MonoBehaviour
         var threadGroupsX = Mathf.CeilToInt((float)_gridN.x / 8);
         var threadGroupsY = Mathf.CeilToInt((float)_gridN.y / 8);
         var threadGroupsZ = Mathf.CeilToInt((float)_gridN.z / 8);
-
-        // _vertexBuffer.SetCounterValue(0);
-        _debugBuffer.SetCounterValue(0);
         
         // 勾配計算
         computeShader.Dispatch(k_BuildGradients, threadGroupsX, threadGroupsY, threadGroupsZ);
         
         // 等値面計算
         computeShader.Dispatch(k_BuildIsoSurface, threadGroupsX, threadGroupsY, threadGroupsZ);
-        
-        // computeShader.Dispatch(k_SetIndirectArgs, 1, 1, 1);
-        
-        int[] countArray = {0, 0, 0, 0, 0};
-        _indirectArgsBuffer.GetData(countArray);
-        // Debug.Log(countArray[0] + " vertices generated.");
-        //
-        // var n = Mathf.Min(8, countArray[0]);
-        // var tmp = new Vector3[n];
-        // _gradientBuffer.GetData(tmp, 0, 0, n);
-        // for (var i = 0; i < n; i++)
-        // {
-        //     Debug.Log($"gradient {i}: {tmp[i]}");
-        // }
-        
-        // _vertexBufferのカウントをCPU側で使えるようにする
-        
-        // if (material != null)
-        // {
-        //     material.SetBuffer("_Vertices", _vertexBuffer);
-        // }
-        
-        Vector4[] tmp = new Vector4[100 * 3 * 4];
-        _vertexBuffer.GetData(tmp);
-        
-        uint[] indexTmp = new uint[100 * 3];
-        _indexBuffer.GetData(indexTmp);
-        
-        uint[] debugTmp = new uint[100];    // デバッグ用にComputeShaderから書き出した値。あとで消す
-        _debugBuffer.GetData(debugTmp);
-        
     }
 
     private void OnDestroy()
@@ -173,8 +134,6 @@ public class MarchingCubeTest : MonoBehaviour
         _indexBuffer?.Release();
         _indirectArgsBuffer?.Release();
         _indexCounterBuffer?.Release();
-        
-        _debugBuffer?.Release();
     }
 
     private void Update()
@@ -216,8 +175,8 @@ public class MarchingCubeTest : MonoBehaviour
         {
             N = _gridN,
             L = new float3(_gridN),
-            r0 = new float3(-0.5f * _gridN.x, 0f, -0.5f * _gridN.z),
-            d = new float3(1.0f, 1.0f, 1.0f)
+            r0 = new float3(-0.5f * _gridN.x * 0.1f, 0f, -0.5f * _gridN.z),
+            d = new float3(0.1f, 0.1f, 0.1f)
         };
 
         if (UseComputeShader)
@@ -238,9 +197,7 @@ public class MarchingCubeTest : MonoBehaviour
                     worldBounds = bounds
                 };
 
-                // MeshTopology.Triangles: args[0] は「頂点数」（三角形数*3）でOK
-                // Graphics.RenderPrimitivesIndirect(rp, MeshTopology.Triangles, _indirectArgsBuffer, 1);
-                Graphics.RenderPrimitivesIndexedIndirect(rp, MeshTopology.Triangles, _indexBuffer, _indirectArgsBuffer, 1, 0);
+                Graphics.RenderPrimitivesIndexedIndirect(rp, MeshTopology.Triangles, _indexBuffer, _indirectArgsBuffer);
             }
         }
         else if (prepareComputeShader)

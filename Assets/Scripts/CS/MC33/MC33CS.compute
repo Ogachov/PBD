@@ -10,8 +10,6 @@
 StructuredBuffer<float> _Volumes;                 // (Nx+1)*(Ny+1)*(Nz+1)
 RWStructuredBuffer<float3> _Gradients;          // 同サイズ
 
-AppendStructuredBuffer<uint> _DebugBuffer;
-
 cbuffer Params
 {
     int3   _NumGrid;    // グリッド個数 (nx, ny, nz)
@@ -152,7 +150,7 @@ int InteriorTest(int i, int flagtplane, float v[8])
 
 uint WriteGridVertex(int gx, int gy, int gz, float4 col, uint verticesCapacity)
 {
-    float3 p = float3(gx, gy, gz);
+    float3 p = float3(gx, gy, gz) * _Step + _Origin;
     float3 n = normalize(GetGridGradient(gx, gy, gz));
     return AppendVertex(p, n, col, verticesCapacity);
 }
@@ -196,41 +194,15 @@ uint WriteEdgeVertex(int cellX, int cellY, int cellZ, int edgeId, float v[8], fl
     // 位置補間（グリッド空間）
     float3 pa = float3(ax, ay, az);
     float3 pb = float3(bx, by, bz);
-    float3 p = lerp(pa, pb, t);
+    float3 p = lerp(pa, pb, t) * _Step + _Origin;
 
     // 法線（勾配）も線形補間
     float3 ga = GetGridGradient(ax, ay, az);
     float3 gb = GetGridGradient(bx, by, bz);
     float3 n = normalize(lerp(ga, gb, t));
-
+    
     return AppendVertex(p, n, col, verticesCapacity);
 }
-
-// bool EnsureCenterVertex(int cellX, int cellY, int cellZ, inout bool has[13], inout float4 mcv[13])
-// {
-//     const int edgeId = 12;
-//     if (has[edgeId]) return true;
-//
-//     float3 p = float3(cellX + 0.5, cellY + 0.5, cellZ + 0.5);
-//     float3 n =
-//         GetGridGradient(cellX,     cellY,     cellZ) +
-//         GetGridGradient(cellX + 1, cellY,     cellZ) +
-//         GetGridGradient(cellX,     cellY + 1, cellZ) +
-//         GetGridGradient(cellX + 1, cellY + 1, cellZ) +
-//         GetGridGradient(cellX,     cellY,     cellZ + 1) +
-//         GetGridGradient(cellX + 1, cellY,     cellZ + 1) +
-//         GetGridGradient(cellX,     cellY + 1, cellZ + 1) +
-//         GetGridGradient(cellX + 1, cellY + 1, cellZ + 1);
-//
-//     n *= (1.0 / 8.0);
-//
-//     if (any(!isfinite(p)) || any(!isfinite(n)))
-//         return false;
-//
-//     mcv[edgeId] = PackVertexNormal(p,n);
-//     has[edgeId] = true;
-//     return true;
-// }
 
 // Case判定＆出力（本体）
 void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
@@ -481,14 +453,12 @@ void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
         {
             int edgeId = code & 0x0F;
             
-            // _DebugBuffer.Append((uint)edgeId);   // edgeIdにはそれっぽい値がはいってる
-
             if (p[edgeId] < 0)
             {
                 if (edgeId == 12)
                 {
                     // Interior center は元コード同等（勾配平均）
-                    float3 center = float3(x + 0.5f, y + 0.5f, z + 0.5f);
+                    float3 center = float3(x + 0.5f, y + 0.5f, z + 0.5f) * _Step + _Origin;
                     float3 sumG =
                         GetGridGradient(x, y, z) + GetGridGradient(x + 1, y, z) +
                         GetGridGradient(x, y + 1, z) + GetGridGradient(x + 1, y + 1, z) +
@@ -502,8 +472,6 @@ void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
                 {
                     // 12本のエッジは共通関数で生成
                     p[edgeId] = WriteEdgeVertex(x, y, z, edgeId, v, col, _VerticesCapacity);
-                    
-                    // _DebugBuffer.Append((uint)p[edgeId]);// これが全部１になってる 
                 }
             }
             
@@ -513,10 +481,6 @@ void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
             code >>= 4;
         }
 
-        // _DebugBuffer.Append((uint)f0);   // f0, f1, f2が全部１になってる
-        // _DebugBuffer.Append((uint)f1);
-        // _DebugBuffer.Append((uint)f2);
-// #if 1
         if (f0 != f1 && f0 != f2 && f1 != f2)
         {
 #if defined(MC_Normal_neg)
@@ -532,15 +496,6 @@ void FindCaseAndEmit(int x, int y, int z, int cubeIndex, float v[8])
                 AppendTriangle(f0, f1, f2, _IndicesCapacity);
             }
         }
-// #else        
-        // float3 p0 = float3(x, y, z);
-        // float3 p1 = float3(x + 1, y, z);
-        // float3 p2 = float3(x, y + 1, z);
-        // uint i0 = AppendVertex(p0, GetGridGradient(x, y, z), float4(1,1,1,1), _VerticesCapacity);
-        // uint i1 = AppendVertex(p1, GetGridGradient(x + 1, y, z), float4(1,1,1,1), _VerticesCapacity);
-        // uint i2 = AppendVertex(p2, GetGridGradient(x, y + 1, z), float4(1,1,1,1), _VerticesCapacity);
-        // AppendTriangle(i0, i1, i2, _IndicesCapacity);
-// #endif
     }
 }
 

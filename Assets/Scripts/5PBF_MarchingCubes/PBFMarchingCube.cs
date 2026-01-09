@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 // RenderPrimitivesIndexedを使って座標の配列から点群ジオメトリを描画するサンプル
 namespace RenderPrimitivesIndexed
@@ -33,7 +34,8 @@ namespace RenderPrimitivesIndexed
         [SerializeField, Range(0f, 100f)] private float repulsionStrength = 10f;
 
         [SerializeField] private int3 numDensityGrid = new int3(10, 10, 10);
-        [SerializeField] private ComputeShader computeShader;
+        [SerializeField] private ComputeShader particleComputeShader;
+        [SerializeField] private ComputeShader mc33ComputeShader;
     
         public Material _copiedMaterial;
 
@@ -63,12 +65,12 @@ namespace RenderPrimitivesIndexed
             numParticles = pointCount;
             dispatchThreadGroupsX = Mathf.CeilToInt((float)numParticles / ThreadGroupsX);
             
-            if (computeShader != null)
+            if (particleComputeShader != null)
             {
-                k_InitPoolList = computeShader.FindKernel("InitPoolList");
-                k_InitParticles = computeShader.FindKernel("InitParticles");
-                k_SpawnParticles = computeShader.FindKernel("SpawnParticles");
-                k_UpdateParticles = computeShader.FindKernel("UpdateParticles");
+                k_InitPoolList = particleComputeShader.FindKernel("InitPoolList");
+                k_InitParticles = particleComputeShader.FindKernel("InitParticles");
+                k_SpawnParticles = particleComputeShader.FindKernel("SpawnParticles");
+                k_UpdateParticles = particleComputeShader.FindKernel("UpdateParticles");
             }
 
             var particleSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Particle));
@@ -86,13 +88,13 @@ namespace RenderPrimitivesIndexed
             
 
             // プールリスト初期化
-            computeShader.SetBuffer(k_InitPoolList, "PoolAppend", _poolBuffer);
-            computeShader.SetInt("_Capacity", numParticles);
-            computeShader.Dispatch(k_InitPoolList, dispatchThreadGroupsX, 1, 1);
+            particleComputeShader.SetBuffer(k_InitPoolList, "PoolAppend", _poolBuffer);
+            particleComputeShader.SetInt("_Capacity", numParticles);
+            particleComputeShader.Dispatch(k_InitPoolList, dispatchThreadGroupsX, 1, 1);
             // パーティクル初期化
-            computeShader.SetBuffer(k_InitParticles, "Particles", _particleBuffer);
-            computeShader.SetInt("_Capacity", numParticles);
-            computeShader.Dispatch(k_InitParticles, dispatchThreadGroupsX, 1, 1);
+            particleComputeShader.SetBuffer(k_InitParticles, "Particles", _particleBuffer);
+            particleComputeShader.SetInt("_Capacity", numParticles);
+            particleComputeShader.Dispatch(k_InitParticles, dispatchThreadGroupsX, 1, 1);
             
             
             // マテリアルのコピーを作成してバッファをセット
@@ -122,17 +124,17 @@ namespace RenderPrimitivesIndexed
 
         private void Update()
         {
-            if (computeShader == null)
+            if (particleComputeShader == null)
             {
                 return;
             }
             
-            computeShader.SetInt("_Capacity", numParticles);
-            computeShader.SetInt("_FrameCount", Time.frameCount);
-            computeShader.SetFloat("_DeltaTime", Time.deltaTime);
-            computeShader.SetFloat("_Gravity", gravity);
-            computeShader.SetFloat("_RepulsionRadius", repulsionRadius);
-            computeShader.SetFloat("_RepulsionStrength", repulsionStrength);
+            particleComputeShader.SetInt("_Capacity", numParticles);
+            particleComputeShader.SetInt("_FrameCount", Time.frameCount);
+            particleComputeShader.SetFloat("_DeltaTime", Time.deltaTime);
+            particleComputeShader.SetFloat("_Gravity", gravity);
+            particleComputeShader.SetFloat("_RepulsionRadius", repulsionRadius);
+            particleComputeShader.SetFloat("_RepulsionStrength", repulsionStrength);
 
             // Spawn
             {
@@ -142,24 +144,24 @@ namespace RenderPrimitivesIndexed
                 _poolCountBuffer.GetData(poolCountArray);
                 var availablePoolCount = poolCountArray[0];
                 var spawnCount = Mathf.Min(spawnPerFrame, availablePoolCount);
-                computeShader.SetInt("_SpawnCount", spawnCount);
+                particleComputeShader.SetInt("_SpawnCount", spawnCount);
                 if (spawnCount > 0)
                 {
-                    computeShader.SetBuffer(k_SpawnParticles, "Particles", _particleBuffer);
-                    computeShader.SetBuffer(k_SpawnParticles, "PoolConsume", _poolBuffer);
-                    computeShader.Dispatch(k_SpawnParticles, Mathf.CeilToInt((float)spawnCount / ThreadGroupsX), 1, 1);
+                    particleComputeShader.SetBuffer(k_SpawnParticles, "Particles", _particleBuffer);
+                    particleComputeShader.SetBuffer(k_SpawnParticles, "PoolConsume", _poolBuffer);
+                    particleComputeShader.Dispatch(k_SpawnParticles, Mathf.CeilToInt((float)spawnCount / ThreadGroupsX), 1, 1);
                 }
             }
             
             // Update
             {
                 _activeBuffer.SetCounterValue(0);
-                computeShader.SetBuffer(k_UpdateParticles, "Particles", _particleBuffer);
-                computeShader.SetBuffer(k_UpdateParticles, "AliveList", _activeBuffer);
-                computeShader.SetBuffer(k_UpdateParticles, "PoolAppend", _poolBuffer);
-                computeShader.SetVector("_BoundsCenter", boundsCenter);
-                computeShader.SetVector("_BoundsSize", boundsSize);
-                computeShader.Dispatch(k_UpdateParticles, dispatchThreadGroupsX, 1, 1);
+                particleComputeShader.SetBuffer(k_UpdateParticles, "Particles", _particleBuffer);
+                particleComputeShader.SetBuffer(k_UpdateParticles, "AliveList", _activeBuffer);
+                particleComputeShader.SetBuffer(k_UpdateParticles, "PoolAppend", _poolBuffer);
+                particleComputeShader.SetVector("_BoundsCenter", boundsCenter);
+                particleComputeShader.SetVector("_BoundsSize", boundsSize);
+                particleComputeShader.Dispatch(k_UpdateParticles, dispatchThreadGroupsX, 1, 1);
             }
             
             GraphicsBuffer.CopyCount(_activeBuffer, _activeCountBuffer, 0);
