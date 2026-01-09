@@ -175,7 +175,8 @@ public class MarchingCubeTest : MonoBehaviour
         {
             N = _gridN,
             L = new float3(_gridN),
-            r0 = new float3(-0.5f * _gridN.x * 0.1f, 0f, -0.5f * _gridN.z),
+            // r0 = new float3(-0.5f * _gridN.x * 0.1f, 0f, -0.5f * _gridN.z),
+            r0 = new float3(-5f, 0f, -5f),
             d = new float3(0.1f, 0.1f, 0.1f)
         };
 
