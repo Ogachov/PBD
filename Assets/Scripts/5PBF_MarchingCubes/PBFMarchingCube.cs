@@ -33,10 +33,12 @@ namespace RenderPrimitivesIndexed
         [SerializeField, Range(0.001f, 1f)] private float repulsionRadius = 0.1f;
         [SerializeField, Range(0f, 100f)] private float repulsionStrength = 10f;
 
-        [SerializeField] private int3 numDensityGrid = new int3(10, 10, 10);
+        [SerializeField] private int3 gridSize = new int3(10, 10, 10);
         [SerializeField] private ComputeShader particleComputeShader;
         [SerializeField] private ComputeShader mc33ComputeShader;
-    
+        
+        private MC33CS _mc33CS;
+        
         public Material _copiedMaterial;
 
         private int numParticles;
@@ -46,8 +48,7 @@ namespace RenderPrimitivesIndexed
         private GraphicsBuffer _poolBuffer;
         private GraphicsBuffer _poolCountBuffer;
         
-        private GraphicsBuffer _densityBuffer;  // 立法格子の中に存在するパーティクルカウント用
-        private int3 _numDensityGridCell;
+        private GraphicsBuffer _volumeBuffer;  // 立法格子の中に存在するパーティクルカウント用
 
         // kernel UpdateParticles
         private int k_InitPoolList;
@@ -58,7 +59,7 @@ namespace RenderPrimitivesIndexed
         private const int ThreadGroupsX = 128;
         private int dispatchThreadGroupsX;
         
-        private int3 densityGridSize;
+        private int3 volumeSize;
 
         private void Start()
         {
@@ -83,9 +84,10 @@ namespace RenderPrimitivesIndexed
             _poolCountBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Raw, 1, sizeof(uint));
             
             // 密度格子
-            
-            
-            
+            volumeSize = gridSize + new int3(1, 1, 1);
+            // volumeSizeの最低値は３にする（MC33の仕様上）
+            volumeSize = math.max(volumeSize, new int3(3, 3, 3));
+            _volumeBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, volumeSize.x * volumeSize.y * volumeSize.z, sizeof(uint));
 
             // プールリスト初期化
             particleComputeShader.SetBuffer(k_InitPoolList, "PoolAppend", _poolBuffer);

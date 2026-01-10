@@ -50,6 +50,7 @@
     <Compile Include="Assets\Scripts\MarchingCubesTest\MC33LookUpTable.cs" />
     <Compile Include="Assets\Scripts\PointDrawTest.cs" />
     <Compile Include="Assets\Scripts\CS\Particle.cs" />
+    <Compile Include="Assets\Scripts\MarchingCubesTest\MC33CS.cs" />
     <Compile Include="Assets\Scripts\MarchingCubesTest\MC33.cs" />
     <Compile Include="Assets\Scripts\MarchingCubesTest\MC33PrepareCS.cs" />
     <Compile Include="Assets\Scripts\MarchingCubesTest\MarchingCubeTest.cs" />

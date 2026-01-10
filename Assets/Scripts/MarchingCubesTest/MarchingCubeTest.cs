@@ -9,7 +9,7 @@ public class MarchingCubeTest : MonoBehaviour
     [SerializeField] private bool prepareComputeShader = false;
     [SerializeField] private GameObject cubePrefab;
     [SerializeField] private bool drawCubes = false;
-    [SerializeField, Range(0f, 1.0f)] private float isoLevel = 0.5f;
+    [SerializeField, Range(0f, 1000.0f)] private float isoLevel = 0.5f;
     [SerializeField] private bool UseNoise = false;
     [SerializeField] private Vector3 noiseOffset = Vector3.zero;
     [SerializeField] private float noiseScale = 1.0f;
@@ -26,15 +26,9 @@ public class MarchingCubeTest : MonoBehaviour
     [SerializeField] private Vector3 boundsPadding = new Vector3(2f, 2f, 2f);
 
     private GraphicsBuffer _volumeBuffer;
-    private GraphicsBuffer _gradientBuffer;
-    private GraphicsBuffer _vertexBuffer;
-    private GraphicsBuffer _indexBuffer;
-    private GraphicsBuffer _indirectArgsBuffer;
-    private GraphicsBuffer _indexCounterBuffer;
-    private int k_BuildGradients;
-    private int k_BuildIsoSurface;
-    private int k_InitIndirectArgs;
-    private int k_SetIndirectArgs;
+    private bool _warnedMissingVolumeBuffer = false;
+
+    private MC33CS _mc33CS;
     
     private float _lastIsoLevel = -1.0f;
     private Vector3 _lastNoiseOffset = Vector3.zero;
@@ -58,82 +52,23 @@ public class MarchingCubeTest : MonoBehaviour
     private void Start()
     {
         _meshFilter = GetComponent<MeshFilter>();
-        
-        k_BuildGradients = computeShader.FindKernel("BuildGradients");
-        k_BuildIsoSurface = computeShader.FindKernel("BuildIsoSurface");
-        k_InitIndirectArgs = computeShader.FindKernel("InitIndirectArgs");
-        k_SetIndirectArgs = computeShader.FindKernel("SetIndirectArgs");
+
+        if (computeShader != null)
+        {
+            _mc33CS = new MC33CS(computeShader, maxTriangles);
+        }
     }
-    
-    private void InitComputeShaderBuffers()
+
+    public void SetVolumeBuffer(GraphicsBuffer volumeBuffer)
     {
-        _volumeBuffer?.Release();
-        _gradientBuffer?.Release();
-        _vertexBuffer?.Release();
-        _indexBuffer?.Release();
-        _indirectArgsBuffer?.Release();
-        _indexCounterBuffer?.Release();
-
-        _volumeBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _volumes.Length, sizeof(float));
-
-        _gradientBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _volumes.Length, sizeof(float) * 3);
-
-        var vertexCount = maxTriangles * 3;
-        _vertexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, vertexCount, sizeof(float) * 4 * 3);   //pos,nrm,col
-        _indexBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, vertexCount, sizeof(uint));
-
-        _indirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.Structured, 1, GraphicsBuffer.IndirectDrawIndexedArgs.size);
-        _indexCounterBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, 1, sizeof(uint));
-
-        computeShader.SetBuffer(k_BuildGradients, "_Volumes", _volumeBuffer);
-        computeShader.SetBuffer(k_BuildGradients, "_Gradients", _gradientBuffer);
-        
-        computeShader.SetBuffer(k_BuildIsoSurface, "_Volumes", _volumeBuffer);
-        computeShader.SetBuffer(k_BuildIsoSurface, "_Gradients", _gradientBuffer);
-        computeShader.SetBuffer(k_BuildIsoSurface, "_Vertices", _vertexBuffer);
-        computeShader.SetBuffer(k_BuildIsoSurface, "_Indices", _indexBuffer);
-        computeShader.SetBuffer(k_BuildIsoSurface, "_IndirectArgs", _indirectArgsBuffer);
-        computeShader.SetBuffer(k_BuildIsoSurface, "_IndexCounter", _indexCounterBuffer);
-        
-        computeShader.SetBuffer(k_InitIndirectArgs, "_IndirectArgs", _indirectArgsBuffer);
-        computeShader.SetBuffer(k_InitIndirectArgs, "_IndexCounter", _indexCounterBuffer);
-        
-        computeShader.SetBuffer(k_SetIndirectArgs, "_IndirectArgs", _indirectArgsBuffer);
-        computeShader.SetBuffer(k_SetIndirectArgs, "_IndexCounter", _indexCounterBuffer);
-        
-        material.SetBuffer("_Vertices", _vertexBuffer);
-    }
-    
-    private void KickComputeShader(MC33Grid grid, float isoLevel)
-    {
-        computeShader.Dispatch(k_InitIndirectArgs, 1, 1, 1);
-        
-        computeShader.SetInts("_NumGrid", grid.N.x, grid.N.y, grid.N.z);
-        computeShader.SetFloats("_Origin", grid.r0.x, grid.r0.y, grid.r0.z);
-        computeShader.SetFloats("_Step", grid.d.x, grid.d.y, grid.d.z);
-        computeShader.SetFloat("_Iso", isoLevel);
-        computeShader.SetInt("_VerticesCapacity", maxTriangles * 3);
-        computeShader.SetInt("_IndicesCapacity", maxTriangles * 3);
-
-        var threadGroupsX = Mathf.CeilToInt((float)_gridN.x / 8);
-        var threadGroupsY = Mathf.CeilToInt((float)_gridN.y / 8);
-        var threadGroupsZ = Mathf.CeilToInt((float)_gridN.z / 8);
-        
-        // 勾配計算
-        computeShader.Dispatch(k_BuildGradients, threadGroupsX, threadGroupsY, threadGroupsZ);
-        
-        // 等値面計算
-        computeShader.Dispatch(k_BuildIsoSurface, threadGroupsX, threadGroupsY, threadGroupsZ);
+        _volumeBuffer = volumeBuffer;
+        _warnedMissingVolumeBuffer = false;
     }
 
     private void OnDestroy()
     {
-        _volumeBuffer?.Release();
-        _gradientBuffer?.Release();
-        _vertexBuffer?.Release();
-        _indexBuffer?.Release();
-        _indirectArgsBuffer?.Release();
-        _indexCounterBuffer?.Release();
+        _mc33CS?.Dispose();
+        _volumeBuffer?.Dispose();
     }
 
     private void Update()
@@ -148,23 +83,6 @@ public class MarchingCubeTest : MonoBehaviour
                 DrawCubes();
             }
         }
-
-        // 前回とパラメータが異なっていたらバッファを初期化
-        if (UseComputeShader)
-        {
-            if (_volumeBuffer == null || !Mathf.Approximately(isoLevel, _lastIsoLevel) || noiseOffset != _lastNoiseOffset ||
-                !Mathf.Approximately(noiseScale, _lastNoiseScale) || gridSize != _lastGridSize ||
-                !Mathf.Approximately(_lastSphereRadius, sphereRadius))
-            {
-                InitComputeShaderBuffers();
-            }
-
-            if (_volumeBuffer != null)
-            {
-                _volumeBuffer.SetData(_volumes);
-            }
-        }
-        
         _lastIsoLevel = isoLevel;
         _lastNoiseOffset = noiseOffset;
         _lastNoiseScale = noiseScale;
@@ -182,22 +100,42 @@ public class MarchingCubeTest : MonoBehaviour
         if (UseComputeShader)
         {
             _meshFilter.mesh = null;
-            
-            KickComputeShader(grid, isoLevel);
 
-            if (material != null && _indirectArgsBuffer != null)
+            if (_mc33CS == null && computeShader != null)
             {
-                // カリングに必要な bounds（とりあえずグリッド全体を覆う）
-                var center = transform.position + new Vector3(0f, _gridN.y * 0.5f, 0f);
-                var size = new Vector3(_gridN.x, _gridN.y, _gridN.z) + boundsPadding;
-                var bounds = new Bounds(center, size);
+                _mc33CS = new MC33CS(computeShader, maxTriangles);
+            }
 
-                var rp = new RenderParams(material)
+            _mc33CS?.SetMaxTriangles(maxTriangles);
+
+            if (_mc33CS != null && _volumeBuffer != null)
+            {
+                _mc33CS.Kick(_volumeBuffer, grid, isoLevel);
+
+                if (material != null)
                 {
-                    worldBounds = bounds
-                };
+                    material.SetBuffer("_Vertices", _mc33CS.VertexBuffer);
+                }
 
-                Graphics.RenderPrimitivesIndexedIndirect(rp, MeshTopology.Triangles, _indexBuffer, _indirectArgsBuffer);
+                if (material != null && _mc33CS.IndirectArgsBuffer != null)
+                {
+                    // カリングに必要な bounds（とりあえずグリッド全体を覆う）
+                    var center = transform.position + new Vector3(0f, _gridN.y * 0.5f, 0f);
+                    var size = new Vector3(_gridN.x, _gridN.y, _gridN.z) + boundsPadding;
+                    var bounds = new Bounds(center, size);
+
+                    var rp = new RenderParams(material)
+                    {
+                        worldBounds = bounds
+                    };
+
+                    Graphics.RenderPrimitivesIndexedIndirect(rp, MeshTopology.Triangles, _mc33CS.IndexBuffer, _mc33CS.IndirectArgsBuffer);
+                }
+            }
+            else if (_mc33CS != null && _volumeBuffer == null && !_warnedMissingVolumeBuffer)
+            {
+                Debug.LogWarning("Volume buffer is not set for MC33CS. Compute shader execution skipped.");
+                _warnedMissingVolumeBuffer = true;
             }
         }
         else if (prepareComputeShader)
@@ -223,6 +161,9 @@ public class MarchingCubeTest : MonoBehaviour
         _gridN = new int3(gridSizeX, gridSizeY, gridSizeZ);
         _volumeN = _gridN + new int3(1, 1, 1);
         _volumes = new float[_volumeN.x * _volumeN.y * _volumeN.z];
+        
+        _volumeBuffer?.Dispose();
+        _volumeBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _volumes.Length, sizeof(float));
 
         var positionCenter = new Vector3(_volumeN.x * 0.5f, _volumeN.y * 0.5f, _volumeN.z * 0.5f);
 
@@ -296,6 +237,7 @@ public class MarchingCubeTest : MonoBehaviour
                 }
             }
         }
+        _volumeBuffer.SetData(_volumes);
     }
 
     private void DrawCubes()

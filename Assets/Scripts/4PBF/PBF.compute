@@ -11,6 +11,8 @@ AppendStructuredBuffer<uint> AliveList;
 AppendStructuredBuffer<uint> PoolAppend;
 ConsumeStructuredBuffer<uint> PoolConsume;
 
+RWStructuredBuffer<uint> _Volumes;
+
 cbuffer Params
 {
     uint _Capacity;
