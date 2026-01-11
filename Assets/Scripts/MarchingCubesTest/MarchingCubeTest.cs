@@ -183,7 +183,7 @@ public class MarchingCubeTest : MonoBehaviour
 
                         var position = new Vector3(x, y, z);
                         position = (position - positionCenter) * noiseScale + noiseOffset;
-                        var value = Perlin.Noise(position.x, position.y, position.z);
+                        var value = Perlin.Noise(position.x, position.y, position.z) * 0.5f + 0.5f;
                         _volumes[x + y * _volumeN.x + z * _volumeN.x * _volumeN.y] = value;
                     }
                 }
