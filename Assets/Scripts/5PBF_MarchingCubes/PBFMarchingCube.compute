@@ -2,6 +2,8 @@
 #pragma kernel InitParticles
 #pragma kernel SpawnParticles
 #pragma kernel UpdateParticles
+#pragma kernel ClearVolumes
+#pragma kernel BuildVolumes
 
 #include "Particle.hlsl"
 
@@ -10,6 +12,10 @@ AppendStructuredBuffer<uint> AliveList;
 
 AppendStructuredBuffer<uint> PoolAppend;
 ConsumeStructuredBuffer<uint> PoolConsume;
+
+RWStructuredBuffer<uint> _DispatchArgs;   //[0] numActiveParticle
+StructuredBuffer<uint> _ActiveList;
+RWStructuredBuffer<int> _Volumes;
 
 cbuffer Params
 {
@@ -23,7 +29,9 @@ cbuffer Params
     // 斥力が発生する半径
     float _RepulsionRadius;
     float _RepulsionStrength;
-}
+
+    int3 _NumGrid;
+};
 
 uint GetSeed(uint3 dispatchThreadID, uint _FrameCount)
 {
@@ -162,3 +170,42 @@ void UpdateParticles (uint3 id : SV_DispatchThreadID)
     Particles[i] = p;
     AliveList.Append(i);
 }
+
+uint VolumeIndex(int x, int y, int z)
+{
+    uint nx1 = (uint)(_NumGrid.x + 1);
+    uint ny1 = (uint)(_NumGrid.y + 1);
+    return (uint)x + (uint)y * nx1 + (uint)z * nx1 * ny1;
+}
+
+[numthreads(8,8,8)]
+void ClearVolumes(uint3 id : SV_DispatchThreadID)
+{
+    uint x = id.x;
+    uint y = id.y;
+    uint z = id.z;
+
+    if (x >= _NumGrid.x + 1 || y >= _NumGrid.y + 1 || z >= _NumGrid.z + 1) return;
+
+    uint index = VolumeIndex(x, y, z);
+    _Volumes[index] = 0;
+}
+
+[numthreads(128,1,1)]
+void BuildVolumes(uint3 id : SV_DispatchThreadID)
+{
+    //    _DispatchArgs[0]がアクティブなパーティクル数
+    uint numActive = _DispatchArgs[0];
+    uint i = id.x;
+    if (i >= numActive) return;
+    
+    // パーティクルのグリッド位置を計算して_Volumesにインクリメントする
+    uint particleIndex = _ActiveList[i];
+    Particle p = Particles[particleIndex];
+    float3 localPos = p.position - (_BoundsCenter - _BoundsSize * 0.5f);
+    int3 gridPos = int3(floor(localPos / _BoundsSize * float3(_NumGrid)));
+    gridPos = clamp(gridPos, int3(0,0,0), _NumGrid - int3(1,1,1));
+    uint volIndex = VolumeIndex(gridPos.x, gridPos.y, gridPos.z);
+    InterlockedAdd(_Volumes[volIndex], 1);
+}
+

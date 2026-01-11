@@ -128,6 +128,26 @@ PrefabInstance:
     m_TransformParent: {fileID: 0}
     m_Modifications:
     - target: {fileID: -2504113132984024431, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
+      propertyPath: isoLevel
+      value: 0.0001
+      objectReference: {fileID: 0}
+    - target: {fileID: -2504113132984024431, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
+      propertyPath: maxTriangles
+      value: 500000
+      objectReference: {fileID: 0}
+    - target: {fileID: -2504113132984024431, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
+      propertyPath: _copiedMaterial
+      value: 
+      objectReference: {fileID: 2100000, guid: da0d688c1e99e1d4b8ae1b18d67afcfa, type: 2}
+    - target: {fileID: -2504113132984024431, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
+      propertyPath: surfaceMaterial
+      value: 
+      objectReference: {fileID: 2100000, guid: da0d688c1e99e1d4b8ae1b18d67afcfa, type: 2}
+    - target: {fileID: -2504113132984024431, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
+      propertyPath: particleMaterial
+      value: 
+      objectReference: {fileID: 2100000, guid: 866501f90be672649b38da7e1f7ad791, type: 2}
+    - target: {fileID: -2504113132984024431, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
       propertyPath: mc33ComputeShader
       value: 
       objectReference: {fileID: 7200000, guid: deed9af253a13d946a100c9254ef006f, type: 3}
@@ -141,7 +161,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 2337075258505543988, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
       propertyPath: m_IsActive
-      value: 0
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 3515350922751407147, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
       propertyPath: m_LocalPosition.x
@@ -1266,7 +1286,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8734656994774550690, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: m_IsActive
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

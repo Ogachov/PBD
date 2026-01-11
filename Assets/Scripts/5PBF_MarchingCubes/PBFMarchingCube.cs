@@ -21,19 +21,22 @@ namespace RenderPrimitivesIndexed
         private static readonly int PositionBuffer = Shader.PropertyToID("_PositionBuffer");
         private static readonly int ObjectToWorld = Shader.PropertyToID("_ObjectToWorld");
 
-        [SerializeField] private Material material;
+        [SerializeField] private Material particleMaterial;
         [SerializeField, Range(1, 10000)] private int pointCount = 10000;
         [SerializeField, Range(0, 10000)] private int drawCount = 10000;
         
         [SerializeField, Range(0,100)] private int spawnPerFrame = 10;
         
         [SerializeField] private float gravity = 9.81f;
-        [SerializeField] private Vector3 boundsCenter = new Vector3(0f, 5f, 0f);
-        [SerializeField] private Vector3 boundsSize = new Vector3(10f, 10f, 10f);
+        [SerializeField] private float3 boundsCenter = new float3(0f, 5f, 0f);
+        [SerializeField] private float3 boundsSize = new float3(10f, 10f, 10f);
         [SerializeField, Range(0.001f, 1f)] private float repulsionRadius = 0.1f;
         [SerializeField, Range(0f, 100f)] private float repulsionStrength = 10f;
 
         [SerializeField] private int3 gridSize = new int3(10, 10, 10);
+        [SerializeField] private int maxTriangles = 50000;
+        [SerializeField, Range(0f, 1f)] private float isoLevel = 0.5f;
+        [SerializeField] private Material surfaceMaterial;
         [SerializeField] private ComputeShader particleComputeShader;
         [SerializeField] private ComputeShader mc33ComputeShader;
         
@@ -47,7 +50,8 @@ namespace RenderPrimitivesIndexed
         private GraphicsBuffer _activeCountBuffer;
         private GraphicsBuffer _poolBuffer;
         private GraphicsBuffer _poolCountBuffer;
-        
+
+        private GraphicsBuffer _dispatchIndirectArgsBuffer;
         private GraphicsBuffer _volumeBuffer;  // 立法格子の中に存在するパーティクルカウント用
 
         // kernel UpdateParticles
@@ -55,6 +59,8 @@ namespace RenderPrimitivesIndexed
         private int k_InitParticles;
         private int k_SpawnParticles;
         private int k_UpdateParticles;
+        private int k_ClearVolumes;
+        private int k_BuildVolumes;
         
         private const int ThreadGroupsX = 128;
         private int dispatchThreadGroupsX;
@@ -72,6 +78,8 @@ namespace RenderPrimitivesIndexed
                 k_InitParticles = particleComputeShader.FindKernel("InitParticles");
                 k_SpawnParticles = particleComputeShader.FindKernel("SpawnParticles");
                 k_UpdateParticles = particleComputeShader.FindKernel("UpdateParticles");
+                k_ClearVolumes = particleComputeShader.FindKernel("ClearVolumes");
+                k_BuildVolumes = particleComputeShader.FindKernel("BuildVolumes");
             }
 
             var particleSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Particle));
@@ -82,6 +90,11 @@ namespace RenderPrimitivesIndexed
             _poolBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Append, numParticles, sizeof(uint));
             _poolBuffer.SetCounterValue(0);
             _poolCountBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Raw, 1, sizeof(uint));
+            
+            _dispatchIndirectArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured | GraphicsBuffer.Target.IndirectArguments, 1, sizeof(uint) * 3);
+            // 1, 1, 1で初期化
+            var args = new uint[] { 1, 1, 1 };
+            _dispatchIndirectArgsBuffer.SetData(args);
             
             // 密度格子
             volumeSize = gridSize + new int3(1, 1, 1);
@@ -100,7 +113,7 @@ namespace RenderPrimitivesIndexed
             
             
             // マテリアルのコピーを作成してバッファをセット
-            _copiedMaterial = new Material(material);
+            _copiedMaterial = new Material(particleMaterial);
             _copiedMaterial.SetBuffer(PositionBuffer, _particleBuffer);
         }
 
@@ -116,6 +129,10 @@ namespace RenderPrimitivesIndexed
             _poolBuffer = null;
             _poolCountBuffer?.Dispose();
             _poolCountBuffer = null;
+            _dispatchIndirectArgsBuffer?.Dispose();
+            _dispatchIndirectArgsBuffer = null;
+            _volumeBuffer?.Dispose();
+            _volumeBuffer = null;
             
             if (_copiedMaterial != null)
             {
@@ -161,9 +178,56 @@ namespace RenderPrimitivesIndexed
                 particleComputeShader.SetBuffer(k_UpdateParticles, "Particles", _particleBuffer);
                 particleComputeShader.SetBuffer(k_UpdateParticles, "AliveList", _activeBuffer);
                 particleComputeShader.SetBuffer(k_UpdateParticles, "PoolAppend", _poolBuffer);
-                particleComputeShader.SetVector("_BoundsCenter", boundsCenter);
-                particleComputeShader.SetVector("_BoundsSize", boundsSize);
+                particleComputeShader.SetFloats("_BoundsCenter", boundsCenter.x, boundsCenter.y, boundsCenter.z);
+                particleComputeShader.SetFloats("_BoundsSize", boundsSize.x, boundsSize.y, boundsSize.z);
                 particleComputeShader.Dispatch(k_UpdateParticles, dispatchThreadGroupsX, 1, 1);
+                
+                // 密度格子クリア
+                particleComputeShader.SetInts("_NumGrid", gridSize.x, gridSize.y, gridSize.z);
+                particleComputeShader.SetBuffer(k_ClearVolumes, "_Volumes", _volumeBuffer);
+                var threadGroupsX = Mathf.CeilToInt((float)gridSize.x / 8);
+                var threadGroupsY = Mathf.CeilToInt((float)gridSize.y / 8);
+                var threadGroupsZ = Mathf.CeilToInt((float)gridSize.z / 8);
+                particleComputeShader.Dispatch(k_ClearVolumes, threadGroupsX, threadGroupsY, threadGroupsZ);
+                // 密度格子ビルド
+                GraphicsBuffer.CopyCount(_activeBuffer, _dispatchIndirectArgsBuffer, 0);
+                particleComputeShader.SetBuffer(k_BuildVolumes, "Particles", _particleBuffer);
+                particleComputeShader.SetBuffer(k_BuildVolumes, "_DispatchArgs", _dispatchIndirectArgsBuffer);
+                particleComputeShader.SetBuffer(k_BuildVolumes, "_ActiveList", _activeBuffer);
+                particleComputeShader.SetBuffer(k_BuildVolumes, "_Volumes", _volumeBuffer);
+                particleComputeShader.DispatchIndirect(k_BuildVolumes, _dispatchIndirectArgsBuffer);
+                
+                if (_mc33CS == null && mc33ComputeShader != null)
+                {
+                    _mc33CS = new MC33CS(mc33ComputeShader, maxTriangles);
+                }
+                _mc33CS?.SetMaxTriangles(maxTriangles);
+
+                if (_mc33CS != null && _volumeBuffer != null)
+                {
+                    _mc33CS.Kick(_volumeBuffer, new MC33Grid
+                    {
+                        r0 = -boundsSize * 0.5f + boundsCenter,
+                        L = new float3(gridSize),
+                        d = boundsSize / gridSize,
+                        N = gridSize
+                    }, isoLevel);
+
+                    if (surfaceMaterial != null && _mc33CS.IndirectArgsBuffer != null)
+                    {
+                        surfaceMaterial.SetBuffer("_Vertices", _mc33CS.VertexBuffer);
+                        var center = transform.position + new Vector3(0f, gridSize.y * 0.5f, 0f);
+                        var size = new Vector3(gridSize.x, gridSize.y, gridSize.z);
+                        var bounds = new Bounds(center, size);
+
+                        var surface_rp = new RenderParams(surfaceMaterial)
+                        {
+                            worldBounds = bounds
+                        };
+
+                        Graphics.RenderPrimitivesIndexedIndirect(surface_rp, MeshTopology.Triangles, _mc33CS.IndexBuffer, _mc33CS.IndirectArgsBuffer);
+                    }
+                }
             }
             
             GraphicsBuffer.CopyCount(_activeBuffer, _activeCountBuffer, 0);
@@ -175,7 +239,7 @@ namespace RenderPrimitivesIndexed
             rp.worldBounds = new Bounds(Vector3.zero, Vector3.one * 100f);
 
             _copiedMaterial.SetBuffer(PositionBuffer, _particleBuffer);
-            _copiedMaterial.SetFloat("_Size", material.GetFloat("_Size"));
+            _copiedMaterial.SetFloat("_Size", particleMaterial.GetFloat("_Size"));
             _copiedMaterial.SetMatrix(ObjectToWorld, transform.localToWorldMatrix);
         
             Graphics.RenderPrimitivesIndexed(rp, MeshTopology.Points, _activeBuffer, drawCount);
