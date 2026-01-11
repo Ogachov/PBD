@@ -1221,6 +1221,10 @@ PrefabInstance:
       value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
+      propertyPath: isoLevel
+      value: 0.6
+      objectReference: {fileID: 0}
+    - target: {fileID: 8089788047375371244, guid: 9ac231bf19e016942a34e348b2154824, type: 3}
       propertyPath: material
       value: 
       objectReference: {fileID: 2100000, guid: da0d688c1e99e1d4b8ae1b18d67afcfa, type: 2}

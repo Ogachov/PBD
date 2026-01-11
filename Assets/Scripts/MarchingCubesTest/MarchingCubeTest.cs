@@ -25,6 +25,10 @@ public class MarchingCubeTest : MonoBehaviour
     [SerializeField] private Material material;
     [SerializeField] private Vector3 boundsPadding = new Vector3(2f, 2f, 2f);
 
+    private const float VolumeFixedScale = 65536f;
+    private const float VolumeFixedMin = -32768f;
+    private const float VolumeFixedMax = 32767.99998474f;
+
     private GraphicsBuffer _volumeBuffer;
     private bool _warnedMissingVolumeBuffer = false;
 
@@ -69,6 +73,12 @@ public class MarchingCubeTest : MonoBehaviour
     {
         _mc33CS?.Dispose();
         _volumeBuffer?.Dispose();
+    }
+
+    private static int FloatToFixedVolume(float value)
+    {
+        var clamped = Mathf.Clamp(value, VolumeFixedMin, VolumeFixedMax);
+        return Mathf.RoundToInt(clamped * VolumeFixedScale);
     }
 
     private void Update()
@@ -161,9 +171,10 @@ public class MarchingCubeTest : MonoBehaviour
         _gridN = new int3(gridSizeX, gridSizeY, gridSizeZ);
         _volumeN = _gridN + new int3(1, 1, 1);
         _volumes = new float[_volumeN.x * _volumeN.y * _volumeN.z];
+        var volumeFixed = new int[_volumes.Length];
         
         _volumeBuffer?.Dispose();
-        _volumeBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _volumes.Length, sizeof(float));
+        _volumeBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, _volumes.Length, sizeof(int));
 
         var positionCenter = new Vector3(_volumeN.x * 0.5f, _volumeN.y * 0.5f, _volumeN.z * 0.5f);
 
@@ -237,7 +248,13 @@ public class MarchingCubeTest : MonoBehaviour
                 }
             }
         }
-        _volumeBuffer.SetData(_volumes);
+
+        for (var i = 0; i < _volumes.Length; i++)
+        {
+            volumeFixed[i] = FloatToFixedVolume(_volumes[i]);
+        }
+
+        _volumeBuffer.SetData(volumeFixed);
     }
 
     private void DrawCubes()

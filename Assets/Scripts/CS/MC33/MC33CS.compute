@@ -7,7 +7,7 @@
 #include "CSDraw.hlsl"
 #include "MC33LookUpTable.hlsl"
 
-StructuredBuffer<float> _Volumes;                 // (Nx+1)*(Ny+1)*(Nz+1)
+StructuredBuffer<int> _Volumes;                   // (Nx+1)*(Ny+1)*(Nz+1)
 RWStructuredBuffer<float3> _Gradients;          // 同サイズ
 
 cbuffer Params
@@ -19,7 +19,7 @@ cbuffer Params
     
     uint _VerticesCapacity;
     uint _IndicesCapacity;
-}
+};
 
 uint VolumeIndex(int x, int y, int z)
 {
@@ -30,7 +30,7 @@ uint VolumeIndex(int x, int y, int z)
 
 float SampleVolume(int x, int y, int z)
 {
-    return _Volumes[VolumeIndex(x, y, z)];
+    return (float)_Volumes[VolumeIndex(x, y, z)] * (1.0f / 65536.0f);
 }
 
 float3 GradientFromCells(int x, int y, int z)
