@@ -132,6 +132,18 @@ PrefabInstance:
       value: 0.0001
       objectReference: {fileID: 0}
     - target: {fileID: -2504113132984024431, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
+      propertyPath: gridSize.x
+      value: 100
+      objectReference: {fileID: 0}
+    - target: {fileID: -2504113132984024431, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
+      propertyPath: gridSize.y
+      value: 100
+      objectReference: {fileID: 0}
+    - target: {fileID: -2504113132984024431, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
+      propertyPath: gridSize.z
+      value: 100
+      objectReference: {fileID: 0}
+    - target: {fileID: -2504113132984024431, guid: 41df055c9db01d843aa3a7c696693e47, type: 3}
       propertyPath: maxTriangles
       value: 500000
       objectReference: {fileID: 0}
