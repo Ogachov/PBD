@@ -29,8 +29,12 @@ cbuffer Params
     // 斥力が発生する半径
     float _RepulsionRadius;
     float _RepulsionStrength;
-
+    
     int3 _NumGrid;
+    // 実体の半径
+    float _ParticleRadius;
+    // パーティクルの質量
+    float _ParticleMass;
 };
 
 uint GetSeed(uint3 dispatchThreadID, uint _FrameCount)
@@ -199,6 +203,7 @@ void BuildVolumes(uint3 id : SV_DispatchThreadID)
     uint i = id.x;
     if (i >= numActive) return;
     
+#if 0    
     // パーティクルのグリッド位置を計算して_Volumesにインクリメントする
     uint particleIndex = _ActiveList[i];
     Particle p = Particles[particleIndex];
@@ -207,5 +212,77 @@ void BuildVolumes(uint3 id : SV_DispatchThreadID)
     gridPos = clamp(gridPos, int3(0,0,0), _NumGrid - int3(1,1,1));
     uint volIndex = VolumeIndex(gridPos.x, gridPos.y, gridPos.z);
     InterlockedAdd(_Volumes[volIndex], 1);
+#else
+    // _ParticleRadiusを考慮してパーティクルが影響を与えるボリュームを計算し、_Volumesにインクリメントする
+    // 増やす値は_ParticleMassがそのボリューム内に存在する質量として扱う
+    uint particleIndex = _ActiveList[i];
+    Particle p = Particles[particleIndex];
+
+    float3 boundsMin = _BoundsCenter - _BoundsSize * 0.5f;
+    float3 cellSize = _BoundsSize / float3(_NumGrid);
+    float cellVolume = cellSize.x * cellSize.y * cellSize.z;
+
+    float radius = _ParticleRadius;
+    float sphereVolume = (4.0f / 3.0f) * 3.14159265f * radius * radius * radius;
+    if (sphereVolume <= 0.0f)
+    {
+        return;
+    }
+
+    float3 localPos = p.position - boundsMin;
+    int3 gridPos = int3(floor(localPos / cellSize));
+    gridPos = clamp(gridPos, int3(0, 0, 0), _NumGrid - int3(1, 1, 1));
+
+    const int SAMPLE = 2;
+    const float SCALE = 65536.0f;
+
+    // パーティクルが影響を与える最大27セル（中心と周囲1セルの3×3×3）
+    for (int dz = -1; dz <= 1; dz++)
+    {
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                int3 cell = gridPos + int3(dx, dy, dz);
+                if (cell.x < 0 || cell.y < 0 || cell.z < 0 ||
+                    cell.x >= _NumGrid.x || cell.y >= _NumGrid.y || cell.z >= _NumGrid.z)
+                {
+                    continue;
+                }
+
+                float3 cellMin = boundsMin + float3(cell) * cellSize;
+                float3 sampleStep = cellSize / (float)SAMPLE;
+
+                int insideCount = 0;
+                for (int sz = 0; sz < SAMPLE; sz++)
+                {
+                    for (int sy = 0; sy < SAMPLE; sy++)
+                    {
+                        for (int sx = 0; sx < SAMPLE; sx++)
+                        {
+                            float3 samplePos = cellMin + (float3(sx + 0.5f, sy + 0.5f, sz + 0.5f) * sampleStep);
+                            float distSq = dot(samplePos - p.position, samplePos - p.position);
+                            if (distSq <= radius * radius)
+                            {
+                                insideCount++;
+                            }
+                        }
+                    }
+                }
+
+                float fraction = (float)insideCount / (float)(SAMPLE * SAMPLE * SAMPLE);
+                float overlapVolume = fraction * cellVolume;
+                float contributionMass = overlapVolume / sphereVolume * _ParticleMass;
+
+                int delta = (int)round(contributionMass * SCALE);
+                if (delta != 0)
+                {
+                    uint volIndex = VolumeIndex(cell.x, cell.y, cell.z);
+                    InterlockedAdd(_Volumes[volIndex], delta);
+                }
+            }
+        }
+    }
+#endif
 }
 

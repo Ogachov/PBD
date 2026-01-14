@@ -39,6 +39,8 @@ namespace RenderPrimitivesIndexed
         [SerializeField] private Material surfaceMaterial;
         [SerializeField] private ComputeShader particleComputeShader;
         [SerializeField] private ComputeShader mc33ComputeShader;
+        [SerializeField] private float particleRadius = 0.1f;
+        [SerializeField] private float particleMass = 1f;
         
         private MC33CS _mc33CS;
         
@@ -191,6 +193,8 @@ namespace RenderPrimitivesIndexed
                 particleComputeShader.Dispatch(k_ClearVolumes, threadGroupsX, threadGroupsY, threadGroupsZ);
                 // 密度格子ビルド
                 GraphicsBuffer.CopyCount(_activeBuffer, _dispatchIndirectArgsBuffer, 0);
+                particleComputeShader.SetFloat("_ParticleRadius", particleRadius);
+                particleComputeShader.SetFloat("_ParticleMass", particleMass);
                 particleComputeShader.SetBuffer(k_BuildVolumes, "Particles", _particleBuffer);
                 particleComputeShader.SetBuffer(k_BuildVolumes, "_DispatchArgs", _dispatchIndirectArgsBuffer);
                 particleComputeShader.SetBuffer(k_BuildVolumes, "_ActiveList", _activeBuffer);
